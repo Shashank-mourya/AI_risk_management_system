@@ -1,0 +1,30 @@
+# AI Risk Manager — Track 02
+#
+# Lower bounds only. The pipeline pins what actually has to be reproducible:
+# the SOURCE dataset by SHA-256 (config.py), and the resulting counts by
+# assertion (test_phase1.py). Pinning library patch versions on top of that
+# would add churn without adding reproducibility.
+
+# Phase 1 — data pipeline
+pandas>=2.0
+numpy>=1.24
+pyreadr>=0.5          # reads the .rda source; no R installation needed
+
+# Phase 2 — models
+scikit-learn>=1.3
+lightgbm>=4.0
+matplotlib>=3.7
+joblib>=1.3
+
+# Phase 2 — running notebooks/train_model.ipynb non-interactively:
+#   jupyter nbconvert --to notebook --execute --inplace notebooks/train_model.ipynb
+jupyter>=1.0
+nbconvert>=7.0
+ipykernel>=6.0
+
+# Phase 3 — explanation layer
+groq>=0.11
+python-dotenv>=1.0
+
+# Phase 4 — demo
+streamlit>=1.30

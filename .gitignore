@@ -1,0 +1,38 @@
+# secrets
+.env
+*.key
+kaggle.json
+
+# generated data — all reproducible from build_labels.py
+*.pkl
+*.rda
+*.db
+orders_labeled.csv
+features.csv
+
+# model artefacts
+*.joblib
+threshold.json
+threshold_sweep.csv
+
+# python
+.venv/
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+
+# os
+.DS_Store
+
+# model artefacts (regenerable by notebooks/train_model.ipynb)
+artefacts/
+
+# synthetic rehearsal data: the .csv IS tracked (needed to upload to Kaggle),
+# the .pkl is not (regenerable by make_synthetic_dataset.py)
+data/synthetic_features.pkl
+
+# The two figures the README embeds. artefacts/ is ignored because it is
+# regenerable, but a README with broken images is worse than a duplicated PNG.
+# Refresh with: cp artefacts/cost_vs_threshold.png artefacts/threshold_sensitivity.png docs/
+!docs/
+!docs/*.png
