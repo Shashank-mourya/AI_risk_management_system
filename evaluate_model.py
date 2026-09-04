@@ -55,7 +55,7 @@ from predict import Scorer  # noqa: E402
 from cost_model import (  # noqa: E402
     total_cost_pence, total_cost_pence_per_order, describe as describe_cost,
     P_STAR, COST_REVIEW_PENCE, COST_FRICTION_PENCE, COST_RETURN_PENCE,
-    PREVENTION_RATE,
+    PREVENTION_RATE, GBP_TO_INR, to_inr,
 )
 
 _PASS, _FAIL = [], []
@@ -274,7 +274,7 @@ def part_b(score, features, meta, test, X, y, p, n_boot, thr_override=None):
     base = y.mean()
 
     def cost(yhat):
-        return total_cost_pence(y, yhat) / 100.0
+        return to_inr(total_cost_pence(y, yhat))
 
     rule("PART B - HELD-OUT ACCURACY")
     print(f"\n  test rows            {len(y):,}")
@@ -325,7 +325,7 @@ def part_b(score, features, meta, test, X, y, p, n_boot, thr_override=None):
     # -------------------------------------------------------- bootstrap CIs
     rule(f"B2 · bootstrap confidence intervals ({n_boot:,} resamples)", "-")
     rng = np.random.default_rng(42)
-    boot = {"roc_auc": [], "precision": [], "recall": [], "cost_gbp": []}
+    boot = {"roc_auc": [], "precision": [], "recall": [], "cost_inr": []}
     idx_all = np.arange(len(y))
     for _ in range(n_boot):
         i = rng.choice(idx_all, size=len(idx_all), replace=True)
@@ -336,7 +336,7 @@ def part_b(score, features, meta, test, X, y, p, n_boot, thr_override=None):
         boot["roc_auc"].append(roc_auc_score(yb, pb))
         boot["precision"].append(precision_score(yb, yhb, zero_division=0))
         boot["recall"].append(recall_score(yb, yhb, zero_division=0))
-        boot["cost_gbp"].append(total_cost_pence(yb, yhb) / 100.0)
+        boot["cost_inr"].append(to_inr(total_cost_pence(yb, yhb)))
     print()
     ci = {}
     for k, v in boot.items():
@@ -360,32 +360,36 @@ def part_b(score, features, meta, test, X, y, p, n_boot, thr_override=None):
          *[precision_score(y, (p >= .5).astype(int), zero_division=0),
            recall_score(y, (p >= .5).astype(int), zero_division=0)]),
     ]
-    print(f"\n    {'policy':<24}{'cost GBP':>12}{'precision':>11}{'recall':>9}   vs model")
+    print("")
+    print(f"    amounts shown in INR at an assumed GBP-to-INR rate of "
+          f"{GBP_TO_INR:.1f}. The source data is GBP; the conversion is a "
+          f"display relabelling and moves no threshold.")
+    print(f"\n    {'policy':<24}{'cost INR':>14}{'precision':>11}{'recall':>9}   vs model")
     model_cost = rows[0][1]
     for nm, c, pr, rc in rows:
         if nm.startswith("model @ chosen"):
             delta = "(reference)"
         elif c > model_cost:
-            delta = f"GBP {c - model_cost:>9,.2f} worse"
+            delta = f"INR {c - model_cost:>11,.2f} worse"
         else:
-            delta = f"GBP {model_cost - c:>9,.2f} BETTER"
-        print(f"    {nm:<24}{c:>12,.2f}{pr:>11.4f}{rc:>9.4f}   {delta}")
+            delta = f"INR {model_cost - c:>11,.2f} BETTER"
+        print(f"    {nm:<24}{c:>14,.2f}{pr:>11.4f}{rc:>9.4f}   {delta}")
 
     saved = cost(np.zeros(len(y), int)) - model_cost
     all_cost = cost(np.ones(len(y), int))
     gap = all_cost - model_cost
-    print(f"\n    The model saves GBP {saved:,.2f} against absorbing every return,")
-    print(f"    and GBP {gap:,.2f} against reviewing every order.")
+    print(f"\n    The model saves INR {saved:,.2f} against absorbing every return,")
+    print(f"    and INR {gap:,.2f} against reviewing every order.")
 
     # The comparison that actually matters: "flag everything" needs no model at
     # all. If the model's edge over it is inside the bootstrap noise, the model
     # is not yet earning its place AT THIS COST RATIO.
-    lo, hi = ci["cost_gbp"]
-    print(f"\n    Model cost 95% CI: GBP [{lo:,.2f}, {hi:,.2f}]")
-    print(f"    'Flag everything' costs GBP {all_cost:,.2f}, which needs no model at all.")
+    lo, hi = ci["cost_inr"]
+    print(f"\n    Model cost 95% CI: INR [{lo:,.2f}, {hi:,.2f}]")
+    print(f"    'Flag everything' costs INR {all_cost:,.2f}, which needs no model at all.")
     if lo <= all_cost <= hi:
         print(f"\n    >> 'Flag everything' falls INSIDE the model's confidence interval.")
-        print(f"    >> The GBP {gap:,.2f} edge ({gap/all_cost:.2%}) is not distinguishable")
+        print(f"    >> The INR {gap:,.2f} edge ({gap/all_cost:.2%}) is not distinguishable")
         print(f"    >> from noise at this FP:FN ratio. The model is beating random")
         print(f"    >> comfortably, but at THIS cost assumption it is barely beating")
         print(f"    >> a policy that reviews everything. Check the cost-model inputs.")

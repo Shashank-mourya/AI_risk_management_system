@@ -43,13 +43,47 @@ are wrong:
   - COST_REVIEW_PENCE, ABANDON_RATE, CONTRIBUTION_MARGIN_RATE
   - PREVENTION_RATE
 
-Do not present the pound figures as measured outcomes. Present the *shape* -
+Do not present the money figures as measured outcomes. Present the *shape* -
 that the optimum sits well below 0.5, and why - which is what survives being
 wrong about any single constant.
+
+CURRENCY
+--------
+Every value in this module is stored in PENCE, because that is the unit the
+source data is actually denominated in - a UK wholesale gift retailer, Dec 2009
+to Dec 2011. Rupees are a DISPLAY layer: `GBP_TO_INR` and `fmt_inr()` convert
+at print time and nothing else in the pipeline sees them. Two reasons that
+matters. The stored constants stay the raw measured medians, so nobody has to
+trust an FX rate to check them against build_features.py. And the threshold is
+scale-invariant - multiplying every cost term by the same constant cannot move
+the argmin - so the conversion provably changes no decision, only the label on
+the y-axis.
 """
 
 import numpy as np
 from sklearn.metrics import confusion_matrix
+
+# ---------------------------------------------------------------------------
+# Display currency. ASSUMED, like every other rate in this file.
+#
+# 75.0 is roughly the GBP/INR mid-market rate over 2009-2011, the period the
+# data actually covers - a contemporaneous conversion, not today's. Converting
+# 2011 sterling at a 2026 rate would imply the amounts had been carried forward
+# through fifteen years of inflation in both currencies, which they have not.
+# This is a unit relabelling for readability, NOT a claim that this is an
+# Indian dataset: it is a UK wholesale gift retailer and the write-up says so.
+# ---------------------------------------------------------------------------
+GBP_TO_INR = 75.0
+
+
+def to_inr(pence):
+    """Pence -> rupees. The only place the FX rate is applied."""
+    return pence / 100.0 * GBP_TO_INR
+
+
+def fmt_inr(pence, dp=2):
+    """Pence -> 'INR 1,234.56'. ASCII, because this prints to a Windows console."""
+    return f"INR {to_inr(pence):,.{dp}f}"
 
 # ---------------------------------------------------------------------------
 # Representative order values - MEASURED on training rows only.
@@ -59,8 +93,8 @@ from sklearn.metrics import confusion_matrix
 # false alarm depends on what good orders are worth. On this data those differ
 # by a third, and collapsing them to one median would misprice both sides.
 # ---------------------------------------------------------------------------
-RETURNED_ORDER_VALUE_PENCE = 38815   # median order_value, returned train orders (GBP 388.15)
-KEPT_ORDER_VALUE_PENCE     = 28559   # median order_value, kept train orders    (GBP 285.59)
+RETURNED_ORDER_VALUE_PENCE = 38815   # median order_value, returned train orders (GBP 388.15 = INR 29,111)
+KEPT_ORDER_VALUE_PENCE     = 28559   # median order_value, kept train orders    (GBP 285.59 = INR 21,419)
 
 # ---------------------------------------------------------------------------
 # Assumptions. Every one of these is arguable; none is measured here.
@@ -171,6 +205,14 @@ def as_dict():
             "cost_friction_pence": COST_FRICTION_PENCE,
             "analytic_break_even": round(P_STAR, 6),
         },
+        "display_currency": {
+            "stored_unit": "pence (GBP)",
+            "displayed_unit": "INR",
+            "gbp_to_inr": GBP_TO_INR,
+            "basis": "contemporaneous 2009-2011 mid-market rate, assumed not measured",
+            "note": ("a display relabelling only; the threshold is scale-invariant "
+                     "so this changes no decision"),
+        },
         "formula": ("(tp+fp)*review + fp*friction + fn*cost_return "
                     "+ tp*cost_return*(1-prevention)"),
     }
@@ -178,24 +220,27 @@ def as_dict():
 
 def describe():
     """Human-readable summary. Printed by the notebook and the evaluator."""
-    return f"""cost model (pence)
+    return f"""cost model (stored in pence, shown in INR at {GBP_TO_INR:.1f}/GBP)
   MEASURED on train rows
-    median value, returned orders   {RETURNED_ORDER_VALUE_PENCE:>8,}   (GBP {RETURNED_ORDER_VALUE_PENCE/100:,.2f})
-    median value, kept orders       {KEPT_ORDER_VALUE_PENCE:>8,}   (GBP {KEPT_ORDER_VALUE_PENCE/100:,.2f})
+    median value, returned orders   {fmt_inr(RETURNED_ORDER_VALUE_PENCE):>16}   (GBP {RETURNED_ORDER_VALUE_PENCE/100:,.2f})
+    median value, kept orders       {fmt_inr(KEPT_ORDER_VALUE_PENCE):>16}   (GBP {KEPT_ORDER_VALUE_PENCE/100:,.2f})
   ASSUMED (industry figures, not in this dataset)
-    goods recovery rate             {GOODS_RECOVERY_RATE:>8.0%}
-    payment fee, not refunded       {PSP_FEE_RATE:>8.0%}
-    reverse logistics               {RETURN_LOGISTICS_PENCE:>8,}
-    manual review, per flag         {COST_REVIEW_PENCE:>8,}
-    abandon rate on a false alarm   {ABANDON_RATE:>8.0%}
-    contribution margin             {CONTRIBUTION_MARGIN_RATE:>8.0%}
-    prevention rate on a catch      {PREVENTION_RATE:>8.0%}
+    goods recovery rate             {GOODS_RECOVERY_RATE:>16.0%}
+    payment fee, not refunded       {PSP_FEE_RATE:>16.0%}
+    reverse logistics               {fmt_inr(RETURN_LOGISTICS_PENCE):>16}
+    manual review, per flag         {fmt_inr(COST_REVIEW_PENCE):>16}
+    abandon rate on a false alarm   {ABANDON_RATE:>16.0%}
+    contribution margin             {CONTRIBUTION_MARGIN_RATE:>16.0%}
+    prevention rate on a catch      {PREVENTION_RATE:>16.0%}
+    GBP -> INR display rate         {GBP_TO_INR:>16.1f}
   DERIVED
-    cost of a return                {COST_RETURN_PENCE:>8,}   (GBP {COST_RETURN_PENCE/100:,.2f})
-    cost of a false alarm           {COST_FRICTION_PENCE:>8,}   (GBP {COST_FRICTION_PENCE/100:,.2f})
-    review charged on EVERY flag    {COST_REVIEW_PENCE:>8,}
-    analytic break-even p*          {P_STAR:>8.4f}
-  a caught return still costs {(1-PREVENTION_RATE):.0%} of a missed one"""
+    cost of a return                {fmt_inr(COST_RETURN_PENCE):>16}   (GBP {COST_RETURN_PENCE/100:,.2f})
+    cost of a false alarm           {fmt_inr(COST_FRICTION_PENCE):>16}   (GBP {COST_FRICTION_PENCE/100:,.2f})
+    review charged on EVERY flag    {fmt_inr(COST_REVIEW_PENCE):>16}
+    analytic break-even p*          {P_STAR:>16.4f}
+  a caught return still costs {(1-PREVENTION_RATE):.0%} of a missed one
+  INR is a display unit over GBP source data - the rate is assumed, and the
+  optimal threshold is identical in either currency"""
 
 
 if __name__ == "__main__":

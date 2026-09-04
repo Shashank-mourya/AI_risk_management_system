@@ -108,7 +108,7 @@ if not scorer.reportable:
 st.title("AI Risk Manager — return-risk scorer")
 st.caption(
     f"UCI Online Retail II · {meta['winner']} · operating threshold "
-    f"{scorer.threshold} · amounts in GBP")
+    f"{scorer.threshold} · amounts in INR at an assumed {cm.GBP_TO_INR:.0f}/GBP")
 
 tab_score, tab_cost, tab_metrics = st.tabs(
     ["Score an order", "Cost & threshold", "Held-out evidence"])
@@ -153,7 +153,8 @@ with tab_score:
         c1, c2 = st.columns(2)
         with c1:
             order["order_value"] = st.number_input(
-                "Order value (GBP)", value=float(row.order_value), step=10.0)
+                "Order value (INR)", value=float(row.order_value) * cm.GBP_TO_INR,
+                step=100.0) / cm.GBP_TO_INR
             order["n_lines"] = st.number_input(
                 "Line items", value=int(row.n_lines), step=1, min_value=1)
             order["total_quantity"] = st.number_input(
@@ -337,31 +338,42 @@ with tab_cost:
     c1, c2, c3 = st.columns(3)
     with c1:
         st.markdown("**Measured** (training rows)")
-        v_ret = st.number_input("Median value, returned orders (GBP)",
-                                value=cm.RETURNED_ORDER_VALUE_PENCE / 100, step=10.0)
-        v_kept = st.number_input("Median value, kept orders (GBP)",
-                                 value=cm.KEPT_ORDER_VALUE_PENCE / 100, step=10.0)
+        v_ret = st.number_input("Median value, returned orders (INR)",
+                                value=cm.to_inr(cm.RETURNED_ORDER_VALUE_PENCE),
+                                step=100.0)
+        v_kept = st.number_input("Median value, kept orders (INR)",
+                                 value=cm.to_inr(cm.KEPT_ORDER_VALUE_PENCE),
+                                 step=100.0)
     with c2:
         st.markdown("**Assumed** — cost of a return")
         recovery = st.slider("Goods recovery rate", 0.0, 1.0,
                              cm.GOODS_RECOVERY_RATE, 0.01)
-        logistics = st.number_input("Reverse logistics (GBP)",
-                                    value=cm.RETURN_LOGISTICS_PENCE / 100, step=0.5)
+        logistics = st.number_input("Reverse logistics (INR)",
+                                    value=cm.to_inr(cm.RETURN_LOGISTICS_PENCE),
+                                    step=25.0)
         prevention = st.slider("Share of caught returns actually prevented",
                                0.01, 1.0, cm.PREVENTION_RATE, 0.01)
     with c3:
         st.markdown("**Assumed** — cost of a false alarm")
-        review = st.number_input("Manual review, per flag (GBP)",
-                                 value=cm.COST_REVIEW_PENCE / 100, step=0.5)
+        review = st.number_input("Manual review, per flag (INR)",
+                                 value=cm.to_inr(cm.COST_REVIEW_PENCE),
+                                 step=25.0)
         abandon = st.slider("Abandon rate on a false alarm", 0.0, 0.5,
                             cm.ABANDON_RATE, 0.01)
         margin = st.slider("Contribution margin", 0.0, 1.0,
                            cm.CONTRIBUTION_MARGIN_RATE, 0.01)
 
-    c_return = (v_ret * 100 * (1 - recovery) + v_ret * 100 * cm.PSP_FEE_RATE
-                + logistics * 100)
-    c_friction = v_kept * 100 * abandon * margin
-    c_review = review * 100
+    # The sliders are denominated in INR; the cost model is denominated in
+    # pence, because pence is what the source data is measured in. Convert
+    # once, here, with the same rate cost_model.py displays with.
+    def _to_pence(rupees):
+        return rupees * 100.0 / cm.GBP_TO_INR
+
+    v_ret_p, v_kept_p = _to_pence(v_ret), _to_pence(v_kept)
+    c_return = (v_ret_p * (1 - recovery) + v_ret_p * cm.PSP_FEE_RATE
+                + _to_pence(logistics))
+    c_friction = v_kept_p * abandon * margin
+    c_review = _to_pence(review)
     p_star = (c_review + c_friction) / (c_friction + c_return * prevention)
 
     grid = np.round(np.arange(0.01, 0.995, 0.01), 4)
@@ -385,26 +397,26 @@ with tab_cost:
               delta=f"{best_thr - scorer.threshold:+.2f} vs shipped",
               delta_color="off")
     k2.metric("Analytic break-even", f"{p_star:.3f}")
-    k3.metric("Cost at that point", f"£{best_cost/100:,.0f}")
+    k3.metric("Cost at that point", f"₹{cm.to_inr(best_cost):,.0f}")
     k4.metric("Saved vs flagging nothing",
               f"{(cost_none - best_cost)/cost_none:.1%}")
 
     fig, ax = plt.subplots(figsize=(11, 4.6))
-    ax.plot(grid, costs / 100, color=t["series"], lw=2)
-    ax.plot(best_thr, best_cost / 100, "o", color=t["series"], ms=9, zorder=5)
-    ax.annotate(f"optimum {best_thr:.2f}\n£{best_cost/100:,.0f}",
-                (best_thr, best_cost / 100), textcoords="offset points",
+    ax.plot(grid, cm.to_inr(costs), color=t["series"], lw=2)
+    ax.plot(best_thr, cm.to_inr(best_cost), "o", color=t["series"], ms=9, zorder=5)
+    ax.annotate(f"optimum {best_thr:.2f}\n₹{cm.to_inr(best_cost):,.0f}",
+                (best_thr, cm.to_inr(best_cost)), textcoords="offset points",
                 xytext=(12, 16), fontsize=9, color=t["series"], ha="left",
                 bbox=dict(boxstyle="round,pad=.25", fc=t["surface"],
                           ec=t["series"], lw=.8, alpha=.9))
-    ax.axhline(cost_none / 100, color=t["ink2"], ls="--", lw=1.1)
-    ax.annotate("flag nothing (absorb every return)", (0.99, cost_none / 100),
+    ax.axhline(cm.to_inr(cost_none), color=t["ink2"], ls="--", lw=1.1)
+    ax.annotate("flag nothing (absorb every return)", (0.99, cm.to_inr(cost_none)),
                 ha="right", va="bottom", fontsize=8, color=t["ink2"])
     ax.axvline(scorer.threshold, color=t["ink2"], lw=1, alpha=.55)
     ax.annotate(f"shipped {scorer.threshold:.2f}", (scorer.threshold, ax.get_ylim()[1]),
                 rotation=90, va="top", ha="right", fontsize=8, color=t["ink2"])
     ax.set_xlabel("decision threshold")
-    ax.set_ylabel("total cost on 6,070 held-out orders (GBP)")
+    ax.set_ylabel("total cost on 6,070 held-out orders (INR)")
     ax.margins(y=.14)
     style_axes(ax, t)
     st.pyplot(fig, width='stretch')
@@ -421,7 +433,7 @@ with tab_cost:
         st.info(
             f"Under **these** assumptions the optimum is {best_thr:.2f}, but the "
             f"shipped model still operates at {scorer.threshold:.2f} "
-            f"(£{cost_ship/100:,.0f}). Moving a slider does not silently "
+            f"(₹{cm.to_inr(cost_ship):,.0f}). Moving a slider does not silently "
             f"re-deploy anything — changing the operating point is a decision "
             f"someone signs off on.")
 
@@ -505,10 +517,14 @@ with tab_metrics:
   generator, so declining to report them *is* the honesty bar being met.
 - **The seven assumed cost inputs are not measured.** This dataset contains no
   cost data at all. Read the *shape* — the optimum sits near {meta['analytic_break_even']:.2f},
-  well below the 0.5 default, and moves slowly — not the pound figures.
-- **The source is a UK wholesale gift retailer.** Median order £304, customers
-  mostly businesses, so return behaviour is B2B-flavoured. Amounts stay in GBP:
-  converting to INR would imply the data is Indian when it is not.
+  well below the 0.5 default, and moves slowly — not the cash figures.
+- **The source is a UK wholesale gift retailer.** Median order £304 (₹22,833),
+  customers mostly businesses, so return behaviour is B2B-flavoured. **This is
+  not Indian data.** Amounts are stored and measured in GBP and displayed in INR
+  at an assumed {cm.GBP_TO_INR:.0f}/GBP — roughly the 2009–2011 rate, the
+  period the data actually covers. That rate is an assumption like every other
+  on this page, and because all cost terms scale together the conversion cannot
+  move the optimal threshold.
 - **22.8% of source rows have no customer ID** and are excluded entirely, because
   a return that cannot be attributed to a customer cannot become a label.
 - No payment method, addresses or discount data exist in the source, so those

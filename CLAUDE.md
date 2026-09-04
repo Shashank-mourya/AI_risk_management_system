@@ -18,7 +18,7 @@ the model better but the metrics less trustworthy, it is the wrong change.
 | **Return-risk, not fraud** | Fraud is a different track. Fraud = someone else's card. Return risk = the real cardholder, transaction still unwinds. |
 | **Returns only, chargebacks unevaluated** | No public dataset carries disputes. `label_disputed` is always 0. The dispute path is built in the schema and API but **no metrics are reported for it** — synthetic dispute labels would measure our own generator, which fails the honesty bar. Say this out loud in the write-up. |
 | **Dataset: UCI Online Retail II** | 1,067,371 rows, Dec 2009 – Dec 2011. Real returns via credit notes (`Invoice` starting with `C`). Real customer IDs, minute-level timestamps. Razorpay supplied nothing. |
-| **Amounts stay in GBP** | UK retailer. Converting to INR would imply the data is Indian when it is not, and there is no honest 2011→2026 rate. Provenance beats familiarity. |
+| **Amounts measured in GBP, displayed in INR** | UK retailer, so pence is the unit the data is actually denominated in and every stored constant stays pence. Rupees are a display layer: one `GBP_TO_INR = 75.0` in `cost_model.py`, applied only by `to_inr()`/`fmt_inr()` at print and UI time. 75 is the contemporaneous 2009–2011 rate, not today's — converting 2011 sterling at a 2026 rate would imply fifteen years of inflation the amounts never went through. The rate is an assumption and is labelled as one; because every cost term scales by it, the optimal threshold is provably identical in either currency. **Never let this become a claim that the data is Indian** — the app, the notebook and the write-up all say UK wholesale gift retailer. |
 | **Two candidate models, ship one** | Logistic regression (interpretable baseline) + LightGBM. Same features, same rows, same split. Selected on **total cost at the optimal threshold** — not accuracy, not F1. If boosting wins only marginally, ship the simpler model and say why. |
 | **Streamlit, not a React frontend** | The differentiator is the cost-vs-threshold curve, which needs interactive cost sliders. FastAPI only if time remains. |
 | **One LLM, stateless** | `openai/gpt-oss-120b` on Groq (`GROQ_MODEL` in `.env`). One call, score + top features in, one paragraph out. **Not a chatbot** — no history, no follow-ups, no routing by severity. Was `llama-3.3-70b-versatile`; Groq retired the Llama chat models and the key 404s on them. The model name is a setting, not a decision — the invariance test exists precisely so swapping it changes nothing that matters. |
@@ -58,7 +58,7 @@ RETURN_WINDOW_DAYS             90      the LABEL horizon AND the maturity horizo
 mature orders              30,347      6,628 immature dropped (inside 90d of data end)
 POSITIVE RATE              16.73%
 split date             2011-04-28      train 24,277 (16.83%) / test 6,070 (16.33%)
-order value GBP      median 304.44     mean 470.80
+order value GBP      median 304.44     mean 470.80   (INR 22,833 / 35,310 at 75/GBP)
 ```
 
 **The label is "returned within [1, 90] days", not "ever returned".** It used to be
@@ -157,8 +157,13 @@ Two representative order values, not one: a miss is priced on what returned orde
 worth (median £388.15), a false alarm on what kept orders are worth (median £285.59).
 
 **Measured:** those two order values. **Assumed:** recovery rate, PSP fee, logistics,
-review cost, abandon rate, margin, prevention rate — this dataset carries no cost data.
-Report the *shape* (optimum near 0.2, well below 0.5, moves slowly), not the pounds.
+review cost, abandon rate, margin, prevention rate, **and the GBP→INR rate** — this
+dataset carries no cost data. Report the *shape* (optimum near 0.2, well below 0.5,
+moves slowly), not the cash figures.
+
+The currency rate is the one assumption that provably cannot change a decision: it
+multiplies every term of the cost function by the same constant, so it cannot move the
+argmin. Say that out loud rather than hoping nobody asks.
 
 ## Scoring and explanation (Phase 3)
 
@@ -185,7 +190,7 @@ bit-identical. Keep that test passing — it is the AI/non-AI deliverable.
 
 ## Known limitations (state these, do not hide them)
 
-UK **wholesale gift retailer** — median order £304, customers are mostly businesses,
-so return behaviour is B2B-flavoured rather than consumer. 22.8% of rows have no
+UK **wholesale gift retailer** — median order £304 (₹22,833), customers are mostly
+businesses, so return behaviour is B2B-flavoured rather than consumer. 22.8% of rows have no
 customer ID and are excluded entirely. No payment method, no addresses, no discount
 data in the source, so those planned features do not exist.

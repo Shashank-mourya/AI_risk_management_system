@@ -105,7 +105,10 @@ TRAIN_FRACTION = 0.80
 # --------------------------------------------------------------- the database
 MERCHANT_ID = "acc_demo01"
 DATASET_ID = "ds_v1"
-CURRENCY = "GBP"          # UK retailer: amounts are in PENCE, not paise
+CURRENCY = "GBP"          # UK retailer: stored amounts are in PENCE, not paise.
+                          # This is the provenance of the data and does not
+                          # change. Rupees are a DISPLAY layer only - see
+                          # cost_model.GBP_TO_INR / fmt_inr().
 
 def _abs(path):
     """Relative paths in .env are relative to the repo, not to the CWD."""
