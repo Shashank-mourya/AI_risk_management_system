@@ -1,19 +1,15 @@
 """
-AI Risk Manager
-Phase 1 acceptance suite. Verifies the data pipeline end to end.
+Acceptance suite for the data pipeline. Run after build_labels.py,
+build_features.py and build_database.py.
 
     python test_phase1.py
 
-Run AFTER build_labels.py, build_features.py, build_database.py.
-
-WHAT THIS TESTS
----------------
-Phase 1's job is to produce a feature matrix that is (a) reproducible, (b) free
-of target leakage, and (c) consistent with the database. Model quality is not in
-scope here - see test_model.py and evaluate_model.py for that.
+Scope is a feature matrix that is reproducible, free of target leakage and
+consistent with the database. Model quality belongs to test_model.py and
+evaluate_model.py.
 
   1  artefact contract    - the six generated files exist and are readable
-  2  verified numbers     - the counts in BUILD_PLAN_1.md reproduce exactly
+  2  verified numbers     - the recorded counts reproduce exactly
   3  split integrity      - chronological, disjoint, correct cut date
   4  maturity             - no order inside 90 days of the data end survives,
                           and the positive rate does not drift with how long
@@ -21,21 +17,22 @@ scope here - see test_model.py and evaluate_model.py for that.
   5  label sanity         - binary, matches orders_labeled, no NaN
   6  sentinel semantics   - -1 means no history and tracks is_new_customer
   7  leakage: columns     - no outcome or identifier column is a feature
-  8  leakage: as-of       - prior returns RE-DERIVED independently and compared
+  8  leakage: as-of       - prior returns re-derived independently and compared
   9  database             - FK violations, row counts, empty-by-design tables
  10  reproducibility      - features.pkl and features.csv agree
  11  gitignore            - generated files ignored, .env.example tracked
 
-CHECK 8 IS THE IMPORTANT ONE. It rebuilds customer_prior_returns from
-retail2.pkl using a slow explicit loop over return DATES, and requires an exact
+Check 8 is the one that matters. It rebuilds customer_prior_returns from
+retail2.pkl with a slow explicit loop over return dates and demands an exact
 match against the vectorised searchsorted implementation in build_features.py.
-Two independent implementations agreeing is the only real evidence that hard
-rule #1 holds.
+Two independent implementations agreeing is the only real evidence the as-of
+rule holds.
 """
 
 import os
 import re
 import sqlite3
+import subprocess
 import sys
 
 import numpy as np
@@ -47,7 +44,7 @@ from config import (  # noqa: E402
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 
-# From BUILD_PLAN_1.md. These are measured, not guessed. A mismatch means
+# From BUILD_PLAN.md. These are measured, not guessed. A mismatch means
 # something real changed upstream and must be investigated, not patched over.
 EXPECTED = {
     "rows_source":      1_067_371,
@@ -82,7 +79,7 @@ def main():
     print("  Phase 1 acceptance suite - data pipeline")
     print("=" * 72)
 
-    # ------------------------------------------------ 1 artefact contract
+    # --- 1 artefact contract
     print("\n1 - artefact contract")
     paths = {
         "retail2.pkl":         os.path.join(ROOT, "retail2.pkl"),
@@ -102,8 +99,8 @@ def main():
     orders = pd.read_pickle(paths["orders_labeled.pkl"])
     feat = pd.read_pickle(paths["features.pkl"])
 
-    # ------------------------------------------------ 2 verified numbers
-    print("\n2 - verified numbers reproduce (BUILD_PLAN_1.md)")
+    # --- 2 verified numbers
+    print("\n2 - verified numbers reproduce (BUILD_PLAN.md)")
     check(f"source rows = {EXPECTED['rows_source']:,}",
           len(df) == EXPECTED["rows_source"], f"got {len(df):,}")
     check(f"mature orders = {EXPECTED['mature']:,}",
@@ -140,8 +137,8 @@ def main():
     check("non-credit negatives are not in the order set",
           not set(nonc.Invoice.astype(str)) & set(orders.Invoice.astype(str)))
 
-    # ------------------------------------------------ 3 split integrity
-    print("\n3 - split integrity (hard rule #2: chronological only)")
+    # --- 3 split integrity
+    print("\n3 - split integrity (chronological only)")
     split_date = pd.Timestamp(EXPECTED["split_date"])
     check(f"split date = {EXPECTED['split_date']}",
           te.order_date.min().normalize() == split_date,
@@ -156,7 +153,7 @@ def main():
           f"got {sorted(feat.split.unique())}")
     check("train + test = all rows", len(tr) + len(te) == len(feat))
 
-    # ------------------------------------------------ 4 maturity
+    # --- 4 maturity
     print("\n4 - maturity (90-day window)")
     data_end = df.InvoiceDate.max()
     cutoff = data_end - pd.Timedelta(days=RETURN_WINDOW_DAYS)
@@ -167,10 +164,10 @@ def main():
     print(f"         mature {len(feat):,}  (immature excluded upstream: "
           f"{EXPECTED['immature']:,})")
 
-    # THE CHECK THAT WOULD HAVE CAUGHT THE LABEL-HORIZON BUG.
+    # the CHECK that would have caught the label-horizon bug.
     #
     # Maturity guarantees every order had RETURN_WINDOW_DAYS to be observed. If
-    # the LABEL counts returns beyond that window, then an order watched for two
+    # the label counts returns beyond that window, then an order watched for two
     # years is likelier to be labelled positive than one watched for ninety days
     # - for reasons that have nothing to do with the order. The positive rate
     # then encodes exposure time, and because the split is chronological, train
@@ -196,7 +193,7 @@ def main():
           f"{[round(r, 3) for r in rates.tolist()]}  spread {spread:.3f}")
 
 
-    # ------------------------------------------------ 5 label sanity
+    # --- 5 label sanity
     print("\n5 - label sanity")
     check("returned is binary", set(feat.returned.unique()) <= {0, 1},
           f"got {sorted(feat.returned.unique())}")
@@ -212,7 +209,7 @@ def main():
           bool((merged.returned_f == merged.returned_o).all()),
           f"{int((merged.returned_f != merged.returned_o).sum())} disagree")
 
-    # ------------------------------------------------ 6 sentinel semantics
+    # --- 6 sentinel semantics
     print("\n6 - sentinel semantics (-1 is 'no history', not 'never returned')")
     rate = feat.customer_prior_return_rate
     n_sent = int((rate == -1).sum())
@@ -228,8 +225,8 @@ def main():
           bool((feat.loc[feat.is_new_customer == 1, "customer_prior_orders"] == 0).all()))
     print(f"         cold-start {n_sent:,} rows ({n_sent/len(feat):.1%})")
 
-    # ------------------------------------------------ 7 leakage: columns
-    print("\n7 - leakage: no outcome column is a feature (hard rule #1)")
+    # --- 7 leakage: columns
+    print("\n7 - leakage: no outcome column is a feature")
     banned = {"returned", "return_date", "is_mature", "split", "Invoice",
               "customer_id", "label_risk", "return_gap_days"}
     check("no banned column in the feature list", not (banned & set(FEATURES)),
@@ -247,7 +244,7 @@ def main():
           worst < 0.95, f"max |corr| = {worst:.3f}")
     print(f"         strongest single-feature correlation {worst:.3f}")
 
-    # ------------------------------------------------ 8 leakage: as-of
+    # --- 8 leakage: as-of
     print("\n8 - leakage: prior returns RE-DERIVED independently")
     purchases = df[(~df.isC) & (df.Quantity > 0) & df.CustomerID.notna()].copy()
     returns = df[df.isC & (df.Quantity < 0) & df.CustomerID.notna()].copy()
@@ -263,7 +260,7 @@ def main():
     print(f"         rebuilt {len(pairs):,} purchase->return matches "
           f"in the [{MIN_GAP_DAYS:.0f}, {RETURN_WINDOW_DAYS}]d window")
 
-    # Collapse to one event per returned purchase ORDER, dated at its earliest
+    # Collapse to one event per returned purchase order, dated at its earliest
     # returned line. build_features.py counts prior returns in the same units
     # as prior orders; re-derive that here independently rather than trusting
     # it. Restricted to the labelled order population, same as the pipeline.
@@ -274,8 +271,8 @@ def main():
     print(f"         collapsed to {len(obs):,} returned orders "
           f"across {obs.customer_id.nunique():,} customers")
 
-    # Explicit loop: for each order, count this customer's returns whose RETURN
-    # DATE is strictly before the order date. Deliberately not searchsorted.
+    # Explicit loop: for each order, count this customer's returns whose return
+    # date is strictly before the order date. Deliberately not searchsorted.
     ret_lists = {c: sorted(g.tolist())
                  for c, g in obs.groupby("customer_id").return_observed_at}
     expected = np.empty(len(feat), dtype=int)
@@ -301,7 +298,7 @@ def main():
           f"{n_bad:,} of {len(actual):,} rows differ "
           f"(max delta {int(np.abs(expected - actual).max()) if n_bad else 0})")
 
-    # The strongest single statement of hard rule #1: an order's own return must
+    # The strongest single statement of the as-of rule: an order's own return must
     # never be dated at or before the order itself.
     own = f_sorted.merge(
         pairs.groupby("Invoice").InvoiceDate_r.min().rename("own_return"),
@@ -316,7 +313,7 @@ def main():
     check("prior_return_rate equals returns / orders",
           bool(np.allclose(recomputed, hist.customer_prior_return_rate, atol=1e-6)))
 
-    # ------------------------------------------------ 9 database
+    # --- 9 database
     print("\n9 - database (risk.db)")
     con = sqlite3.connect(paths["risk.db"])
     cur = con.cursor()
@@ -354,7 +351,7 @@ def main():
           cur.execute("SELECT COALESCE(SUM(label_disputed),0) "
                       "FROM risk_labels").fetchone()[0] == 0)
     # risk_scores is written by score_to_db.py, which runs after Phase 2. This
-    # check used to assert the table was EMPTY, which only held while the two
+    # check used to assert the table was empty, which only held while the two
     # phases were unconnected. Now: empty is fine (Phase 1 alone), populated is
     # fine too - but if it is populated it must be exactly the test split, and
     # it must join cleanly back to the Phase 1 label table.
@@ -393,7 +390,7 @@ def main():
             for parent in owned:
                 if sql and f"REFERENCES {parent}(id)" in sql and name != parent:
                     dependents.add(name)
-        # `reviews` is deliberately NOT deleted - it is a human audit trail and
+        # `reviews` is deliberately not deleted - it is a human audit trail and
         # score_to_db.py refuses to run rather than destroy it.
         cleared = {"risk_explanations", "risk_score_features", "risk_scores",
                    "model_feature_importance", "evaluations"}
@@ -405,7 +402,7 @@ def main():
               f"{n_rev} human review rows exist - score_to_db.py will stop, by design")
     con.close()
 
-    # ------------------------------------------------ 10 reproducibility
+    # --- 10 reproducibility
     print("\n10 - reproducibility")
     csv = pd.read_csv(paths["features.csv"], parse_dates=["order_date"])
     check("features.csv and features.pkl have the same shape",
@@ -421,20 +418,50 @@ def main():
     check("feature matrix is sorted by order_date",
           bool(feat.order_date.is_monotonic_increasing))
 
-    # ------------------------------------------------ 11 gitignore
+    # --- 11 gitignore
     print("\n11 - gitignore hygiene")
-    gi = open(os.path.join(ROOT, ".gitignore")).read()
-    lines = [l.strip() for l in gi.splitlines()
-             if l.strip() and not l.strip().startswith("#")]
-    for pat in [".env", "*.pkl", "*.db", "features.csv", "orders_labeled.csv",
-                "*.joblib", "artefacts/"]:
-        check(f"'{pat}' is ignored", pat in lines)
-    check(".env.example is NOT ignored", ".env.example" not in lines)
+    # Ask git, not the text of the file. This check used to assert that the
+    # literal string "artefacts/" appeared in .gitignore - which it did, and
+    # which is exactly what broke the four "!artefacts/..." negations under it:
+    # git cannot re-include a file whose parent DIRECTORY is excluded, so the
+    # model files the deployment needs were silently uncommittable while this
+    # test reported green. A pattern being present is not a path being ignored.
+    def git_ignored(path):
+        """True, False, or None when git cannot answer."""
+        try:
+            r = subprocess.run(["git", "check-ignore", "-q", path],
+                               cwd=ROOT, capture_output=True)
+        except OSError:
+            return None
+        return r.returncode == 0 if r.returncode in (0, 1) else None
+
+    MUST_IGNORE = [".env", "features.pkl", "orders_labeled.pkl", "risk.db",
+                   "features.csv", "orders_labeled.csv",
+                   "artefacts/invariance.json", "artefacts/cost_vs_threshold.png"]
+    # Small, needed by the deployment, and therefore committed.
+    MUST_TRACK = [".env.example", "artefacts/model.joblib",
+                  "artefacts/scaler.joblib", "artefacts/threshold.json",
+                  "artefacts/threshold_sweep.csv"]
+
+    if git_ignored(".env") is None:
+        print("         (git unavailable - falling back to pattern presence)")
+        lines = [l.strip() for l in
+                 open(os.path.join(ROOT, ".gitignore")).read().splitlines()
+                 if l.strip() and not l.strip().startswith("#")]
+        for pat in [".env", "*.pkl", "*.db", "features.csv",
+                    "orders_labeled.csv", "*.joblib", "artefacts/*"]:
+            check(f"'{pat}' is ignored", pat in lines)
+        check(".env.example is NOT ignored", ".env.example" not in lines)
+    else:
+        for path in MUST_IGNORE:
+            check(f"'{path}' is ignored", git_ignored(path) is True)
+        for path in MUST_TRACK:
+            check(f"'{path}' is committable", git_ignored(path) is False)
     check(".env.example exists and is committable",
           os.path.exists(os.path.join(ROOT, ".env.example")))
     env_ex = open(os.path.join(ROOT, ".env.example")).read()
     filled = re.findall(r"^([A-Z_][A-Z0-9_]*)=(.+)$", env_ex, re.M)
-    # Only CREDENTIAL-shaped keys must be blank. Model ids, local paths and the
+    # Only credential-shaped keys must be blank. Model ids, local paths and the
     # sqlite URL are configuration, not secrets, and carrying real defaults for
     # them is the point of a template - flagging those was a false positive.
     SECRET = re.compile(r"(KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL)", re.I)
@@ -449,7 +476,7 @@ def main():
     check(".env.example declares at least one credential key", bool(creds),
           f"found: {creds}")
 
-    # ------------------------------------------------ summary
+    # --- summary
     print("\n" + "=" * 72)
     print(f"  {len(_PASS)} passed, {len(_FAIL)} failed")
     if _FAIL:
@@ -459,7 +486,7 @@ def main():
         print("\n  A failure here means the pipeline changed. Investigate the")
         print("  cause before adjusting any expected number in this file.")
     else:
-        print("\n  Phase 1 verified: the numbers in BUILD_PLAN_1.md reproduce,")
+        print("\n  Phase 1 verified: the numbers in BUILD_PLAN.md reproduce,")
         print("  the split is chronological, and the as-of feature construction")
         print("  matches an independent re-derivation exactly.")
     print("=" * 72)

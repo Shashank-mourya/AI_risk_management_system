@@ -1,78 +1,46 @@
 """
-AI Risk Manager
-The cost model. Single source of truth, imported by everything that costs a
-decision: the training notebook, evaluate_model.py, and the Streamlit app.
+The cost model. One definition, imported by the training notebook,
+evaluate_model.py and the Streamlit app.
 
     from cost_model import total_cost_pence, P_STAR, describe
 
-WHY THIS IS ITS OWN MODULE
---------------------------
-It used to live in two places that disagreed. The notebook charged
-`fp*c_fp + fn*c_fn`; evaluate_model.py charged review time on every flag and
-only credited a caught return with partial prevention. Two cost models means
-two different "optimal" thresholds, and the graded bar here is honest metrics
-including false-positive cost - so the number a reviewer is shown must come
-from one place.
-
-THE FORMULA
------------
-Flagging an order is not free and catching a return is not the same as
-preventing it. Both were missing from the original model.
-
-    total = (tp + fp) * REVIEW            every flagged order costs analyst time
+    total = (tp + fp) * REVIEW            a flag costs analyst time either way
           +       fp  * FRICTION          a wrongly-flagged good order annoys a customer
           +       fn  * COST_RETURN       a missed return, absorbed in full
           +       tp  * COST_RETURN * (1 - PREVENTION)
-                                          a caught return is only sometimes stopped
 
-The last term is the one people forget. If intervention only works 30% of the
-time, a true positive still costs 70% of a miss, and a model cannot be credited
-with savings it did not produce.
+That last term is the one that gets forgotten. If intervention only works 30% of
+the time, a true positive still costs 70% of a miss. This used to live in two
+places that disagreed - the notebook charged a bare fp*c_fp + fn*c_fn - so two
+different "optimal" thresholds were true at once.
 
-WHAT IS AND IS NOT DEFENDED
----------------------------
-GROUNDED IN THIS DATASET (measured, see build_features.py output):
-  - the two representative order values, below
+Measured from the data: the two representative order values below. Assumed
+industry figures: GOODS_RECOVERY_RATE, PSP_FEE_RATE, RETURN_LOGISTICS_PENCE,
+COST_REVIEW_PENCE, ABANDON_RATE, CONTRIBUTION_MARGIN_RATE, PREVENTION_RATE.
+The dataset carries no cost data whatsoever - no shipping, no margin, no refund
+records - so they are named variables rather than magic numbers, and
+threshold_sensitivity.png shows how far the operating point moves when each one
+is wrong. Quote the shape (the optimum sits well below 0.5 and moves slowly),
+not the cash.
 
-INDUSTRY ASSUMPTIONS, NOT MEASURED (this dataset carries no cost data at all -
-no shipping, no margin, no refund records). They are named variables precisely
-so a reviewer can argue with the assumption instead of a magic number, and
-`threshold_sensitivity.png` shows how far the operating point moves when they
-are wrong:
-  - GOODS_RECOVERY_RATE, PSP_FEE_RATE, RETURN_LOGISTICS_PENCE
-  - COST_REVIEW_PENCE, ABANDON_RATE, CONTRIBUTION_MARGIN_RATE
-  - PREVENTION_RATE
-
-Do not present the money figures as measured outcomes. Present the *shape* -
-that the optimum sits well below 0.5, and why - which is what survives being
-wrong about any single constant.
-
-CURRENCY
---------
-Every value in this module is stored in PENCE, because that is the unit the
-source data is actually denominated in - a UK wholesale gift retailer, Dec 2009
-to Dec 2011. Rupees are a DISPLAY layer: `GBP_TO_INR` and `fmt_inr()` convert
-at print time and nothing else in the pipeline sees them. Two reasons that
-matters. The stored constants stay the raw measured medians, so nobody has to
-trust an FX rate to check them against build_features.py. And the threshold is
-scale-invariant - multiplying every cost term by the same constant cannot move
-the argmin - so the conversion provably changes no decision, only the label on
-the y-axis.
+Everything here is stored in pence, because that is the unit the source data is
+denominated in: a UK wholesale gift retailer, Dec 2009 to Dec 2011. Rupees are a
+display layer (GBP_TO_INR, fmt_inr()) applied at print time and nowhere else.
+Scaling every cost term by the same constant cannot move the argmin, so the
+conversion provably changes no decision, only the label on the y-axis.
 """
 
 import numpy as np
 from sklearn.metrics import confusion_matrix
 
-# ---------------------------------------------------------------------------
-# Display currency. ASSUMED, like every other rate in this file.
+# Display currency. assumed, like every other rate in this file.
 #
 # 75.0 is roughly the GBP/INR mid-market rate over 2009-2011, the period the
 # data actually covers - a contemporaneous conversion, not today's. Converting
 # 2011 sterling at a 2026 rate would imply the amounts had been carried forward
 # through fifteen years of inflation in both currencies, which they have not.
-# This is a unit relabelling for readability, NOT a claim that this is an
+# This is a unit relabelling for readability, not a claim that this is an
 # Indian dataset: it is a UK wholesale gift retailer and the write-up says so.
-# ---------------------------------------------------------------------------
 GBP_TO_INR = 75.0
 
 
@@ -85,53 +53,133 @@ def fmt_inr(pence, dp=2):
     """Pence -> 'INR 1,234.56'. ASCII, because this prints to a Windows console."""
     return f"INR {to_inr(pence):,.{dp}f}"
 
-# ---------------------------------------------------------------------------
-# Representative order values - MEASURED on training rows only.
+
+def inr_to_pence(rupees):
+    """
+    Rupees -> pence. The inverse of to_inr(), and the only place it is written.
+
+    Every surface that takes cost inputs from a user takes them in INR, because
+    that is what it displays; the model is denominated in pence. That
+    conversion used to be re-typed as a local `_to_pence` in app.py and again in
+    api/index.py.
+    """
+    return rupees * 100.0 / GBP_TO_INR
+
+# Representative order values - measured on training rows only.
 #
 # Two different values, because they price two different populations. The cost
 # of a missed return depends on what returned orders are worth; the cost of a
 # false alarm depends on what good orders are worth. On this data those differ
 # by a third, and collapsing them to one median would misprice both sides.
-# ---------------------------------------------------------------------------
 RETURNED_ORDER_VALUE_PENCE = 38815   # median order_value, returned train orders (GBP 388.15 = INR 29,111)
 KEPT_ORDER_VALUE_PENCE     = 28559   # median order_value, kept train orders    (GBP 285.59 = INR 21,419)
 
-# ---------------------------------------------------------------------------
 # Assumptions. Every one of these is arguable; none is measured here.
-# ---------------------------------------------------------------------------
 GOODS_RECOVERY_RATE      = 0.65   # share of value recovered by reselling returned goods
 PSP_FEE_RATE             = 0.02   # payment fee on the original sale, not returned on a refund
 RETURN_LOGISTICS_PENCE   = 850    # collection + inbound handling + restocking, per return
 
-COST_REVIEW_PENCE        = 500    # analyst time to review ONE flagged order
+COST_REVIEW_PENCE        = 500    # analyst time to review one flagged order
 ABANDON_RATE             = 0.08   # share of wrongly-flagged customers who walk
 CONTRIBUTION_MARGIN_RATE = 0.22   # gross margin lost when they do
 
-PREVENTION_RATE          = 0.30   # share of CAUGHT returns actually prevented
+PREVENTION_RATE          = 0.30   # share of caught returns actually prevented
 
-# ---------------------------------------------------------------------------
-# Derived costs
-# ---------------------------------------------------------------------------
-COST_RETURN_PENCE = int(round(
-    RETURNED_ORDER_VALUE_PENCE * (1 - GOODS_RECOVERY_RATE)   # value not recovered
-    + RETURNED_ORDER_VALUE_PENCE * PSP_FEE_RATE              # sunk payment fee
-    + RETURN_LOGISTICS_PENCE                                 # moving the goods back
-))
-
-COST_FRICTION_PENCE = int(round(
-    KEPT_ORDER_VALUE_PENCE * ABANDON_RATE * CONTRIBUTION_MARGIN_RATE
-))
-
-# Analytic break-even. Flag when the expected cost of flagging is lower:
-#   E[flag]    = REVIEW + (1-p)*FRICTION + p*COST_RETURN*(1-PREVENTION)
-#   E[no flag] = p*COST_RETURN
-#   =>  flag iff  p > (REVIEW + FRICTION) / (FRICTION + COST_RETURN*PREVENTION)
+# --- deriving the two composite costs from the raw inputs
 #
-# This is the threshold the cost model implies with no data at all. The
-# empirical sweep should land near it; a large gap means the probabilities are
-# miscalibrated, and that is worth knowing.
-P_STAR = ((COST_REVIEW_PENCE + COST_FRICTION_PENCE)
-          / (COST_FRICTION_PENCE + COST_RETURN_PENCE * PREVENTION_RATE))
+# One function, because both interactive surfaces let a user move these sliders
+# and both then have to turn the raw inputs back into (review, friction,
+# return). app.py and api/index.py each carried their own transcription of the
+# arithmetic below; the API's had already drifted into a differently-guarded
+# break-even. A cost model that exists in three places is three cost models.
+def derive_costs(v_returned_pence=None, v_kept_pence=None, recovery=None,
+                 psp_fee=None, logistics_pence=None, review_pence=None,
+                 abandon=None, margin=None):
+    """
+    Raw inputs -> (c_review, c_friction, c_return), all in pence.
+
+    Every argument defaults to the module constant, so derive_costs() with no
+    arguments reproduces COST_REVIEW_PENCE / COST_FRICTION_PENCE /
+    COST_RETURN_PENCE up to the rounding applied to those constants.
+    """
+    v_ret      = RETURNED_ORDER_VALUE_PENCE  if v_returned_pence is None else v_returned_pence
+    v_kept     = KEPT_ORDER_VALUE_PENCE      if v_kept_pence     is None else v_kept_pence
+    recovery   = GOODS_RECOVERY_RATE         if recovery         is None else recovery
+    psp_fee    = PSP_FEE_RATE                if psp_fee          is None else psp_fee
+    logistics  = RETURN_LOGISTICS_PENCE      if logistics_pence  is None else logistics_pence
+    review     = COST_REVIEW_PENCE           if review_pence     is None else review_pence
+    abandon    = ABANDON_RATE                if abandon          is None else abandon
+    margin     = CONTRIBUTION_MARGIN_RATE    if margin           is None else margin
+
+    c_return = (v_ret * (1 - recovery)   # value not recovered
+                + v_ret * psp_fee        # sunk payment fee
+                + logistics)             # moving the goods back
+    c_friction = v_kept * abandon * margin
+
+    # Whole pence. A fraction of a penny is not a cost, and rounding here is
+    # what makes an interactive surface recomputing the shipped assumptions
+    # land on exactly the figure the training notebook wrote into
+    # threshold_sweep.csv instead of 0.006% away from it.
+    return float(round(review)), float(round(c_friction)), float(round(c_return))
+
+
+def analytic_break_even(c_review=None, c_friction=None, c_return=None,
+                        prevention=None):
+    """
+    The threshold the cost model implies with no data at all. Flag when the
+    expected cost of flagging is lower:
+
+        E[flag]    = review + (1-p)*friction + p*c_return*(1-prevention)
+        E[no flag] = p*c_return
+        =>  flag iff  p > (review + friction) / (friction + c_return*prevention)
+
+    The empirical sweep should land near this; a large gap means the
+    probabilities are miscalibrated, and that is worth knowing.
+
+    A zero denominator means flagging can never pay for itself (nothing is
+    prevented and nobody walks), so the break-even is 1.0 - flag nothing.
+    """
+    c_review   = COST_REVIEW_PENCE   if c_review   is None else c_review
+    c_friction = COST_FRICTION_PENCE if c_friction is None else c_friction
+    c_return   = COST_RETURN_PENCE   if c_return   is None else c_return
+    prevention = PREVENTION_RATE     if prevention is None else prevention
+
+    denom = c_friction + c_return * prevention
+    if denom <= 0:
+        return 1.0
+    return float((c_review + c_friction) / denom)
+
+
+# Derived costs. int(round(...)) so the figures quoted in the write-up are whole
+# pence; the interactive surfaces use derive_costs() unrounded.
+_review, _friction, _return = derive_costs()
+COST_RETURN_PENCE   = int(round(_return))
+COST_FRICTION_PENCE = int(round(_friction))
+del _review, _friction, _return
+
+P_STAR = analytic_break_even()
+
+
+def total_cost_from_counts(tp, fp, fn, tn=0, c_review=None, c_friction=None,
+                           c_return=None, prevention=None):
+    """
+    Total cost in pence from a confusion matrix.
+
+    Separate from total_cost_pence because the API only ever has the counts -
+    the threshold sweep is a stored CSV of tp/fp/fn/tn, not a stored set of
+    predictions - and re-costing them there was the fourth copy of this formula.
+    `tn` is accepted and ignored: a correctly-unflagged order costs nothing, and
+    naming it keeps callers from having to remember which three of four matter.
+    """
+    c_review    = COST_REVIEW_PENCE    if c_review    is None else c_review
+    c_friction  = COST_FRICTION_PENCE  if c_friction  is None else c_friction
+    c_return    = COST_RETURN_PENCE    if c_return    is None else c_return
+    prevention  = PREVENTION_RATE      if prevention  is None else prevention
+
+    return float((tp + fp) * c_review
+                 + fp * c_friction
+                 + fn * c_return
+                 + tp * c_return * (1 - prevention))
 
 
 def total_cost_pence(y_true, y_pred, c_review=None, c_friction=None,
@@ -143,16 +191,10 @@ def total_cost_pence(y_true, y_pred, c_review=None, c_friction=None,
     re-cost the same predictions under different assumptions without mutating
     module state.
     """
-    c_review    = COST_REVIEW_PENCE    if c_review    is None else c_review
-    c_friction  = COST_FRICTION_PENCE  if c_friction  is None else c_friction
-    c_return    = COST_RETURN_PENCE    if c_return    is None else c_return
-    prevention  = PREVENTION_RATE      if prevention  is None else prevention
-
     tn, fp, fn, tp = confusion_matrix(y_true, y_pred, labels=[0, 1]).ravel()
-    return float((tp + fp) * c_review
-                 + fp * c_friction
-                 + fn * c_return
-                 + tp * c_return * (1 - prevention))
+    return total_cost_from_counts(tp, fp, fn, tn, c_review=c_review,
+                                  c_friction=c_friction, c_return=c_return,
+                                  prevention=prevention)
 
 
 def total_cost_pence_per_order(y_true, y_pred, order_value_pence):

@@ -2,9 +2,9 @@
 
 Razorpay hackathon, Track 02. Return-risk scorer.
 
-**Graded bar:** *"Honest metrics including false-positive cost."* Measured precision
-and recall on a held-out test set. When a change trades metric trustworthiness for
-model accuracy, it is the wrong change.
+The bar: honest metrics including false-positive cost, with measured precision and
+recall on a held-out test set. A change that trades metric trustworthiness for model
+accuracy is the wrong change.
 
 ---
 
@@ -12,16 +12,16 @@ model accuracy, it is the wrong change.
 
 | # | Phase | State |
 |---|---|---|
-| 1 | Data pipeline — labels, features, database | ✅ **done** |
-| 2 | Train two models, threshold sweep, cost curve — **local, CPU** | ✅ **done** |
-| 3 | LLM explanation layer | 🟡 **built, needs a Groq key** |
-| 4 | Streamlit demo app | ✅ **done** |
-| 5 | Write-up + submission package | ⬜ **next** |
-| — | FastAPI wrapper | ⬜ *only if time remains* |
+| 1 | Data pipeline — labels, features, database | done |
+| 2 | Train two models, threshold sweep, cost curve (local, CPU) | done |
+| 3 | LLM explanation layer | built, needs a Groq key |
+| 4 | Streamlit demo app | done |
+| 5 | Write-up + submission package | next |
+| — | FastAPI wrapper | only if time remains |
 
 ---
 
-## Phase 1 — Data pipeline ✅
+## Phase 1 — Data pipeline
 
 Three scripts, run in order. All outputs are regenerable; none are committed.
 
@@ -53,16 +53,16 @@ risk.db                  ~139 MB
 
 ---
 
-## Phase 2 — Models ✅
+## Phase 2 — Models
 
 Runs **locally, on CPU**. Logistic regression trains in 0.06 s on this data and
 LightGBM in a few seconds; a GPU is not just unnecessary, it is slower at this
 size because of transfer overhead.
 
-Output is `notebooks/train_model.ipynb` plus saved artefacts in the repo. Use
-`NOTEBOOK_PROMPT.md` to generate it. (Kaggle would also work, but it means
-uploading `features.pkl` and downloading the artefacts back on every iteration —
-local keeps everything in the repo where Claude Code can run and read it.)
+Output is `notebooks/train_model.ipynb` plus saved artefacts in the repo.
+(Kaggle would also work, but it means uploading `features.pkl` and downloading
+the artefacts back on every iteration — running locally keeps everything in one
+place.)
 
 ```bash
 pip install scikit-learn lightgbm matplotlib joblib jupyter
@@ -82,10 +82,10 @@ jupyter notebook notebooks/train_model.ipynb
       below the pre-committed 2% bar, so logistic regression ships
 - [x] Saved artefacts: model, scaler, `threshold.json`, `threshold_sweep.csv`
 
-**Hard rules:** no `train_test_split`, no plain k-fold (use `TimeSeriesSplit` on
-train rows only), no SMOTE or resampling. 18% positive needs no rebalancing, and
-rebalancing would distort the calibrated probabilities the cost model depends on.
-State that in a markdown cell rather than silently not doing it.
+Constraints: no `train_test_split`, no plain k-fold (use `TimeSeriesSplit` on train
+rows only), no SMOTE or resampling. 18% positive needs no rebalancing, and rebalancing
+would distort the calibrated probabilities the cost model depends on. The notebook says
+so in a markdown cell rather than silently not doing it.
 
 **Settled.** The cost model is `cost_model.py`, the single definition imported by the
 notebook, `evaluate_model.py` and the app. Two order values are measured on training
@@ -105,12 +105,14 @@ an analytic break-even of 0.198.
 
 ---
 
-## Phase 3 — Explanation layer 🟡 *built; needs a Groq key to generate prose*
+## Phase 3 — Explanation layer
+
+*Built; needs a Groq key to generate prose.*
 
 One Groq call. Stateless, single-turn. **Not a chatbot.**
 
 - [x] `explain.py` — takes score + top feature contributions, returns one paragraph
-- [x] Model: `llama-3.3-70b-versatile`
+- [x] Model: `openai/gpt-oss-120b` on Groq (`GROQ_MODEL`)
 - [x] Cache into `risk_explanations` keyed on `score_id`; never regenerate on repeat
 - [x] Backoff-and-retry on 429 before any model fallback
 - [x] Failure mode is a **missing paragraph**, never a changed score
@@ -124,7 +126,7 @@ One Groq call. Stateless, single-turn. **Not a chatbot.**
 
 ---
 
-## Phase 4 — Streamlit app ✅
+## Phase 4 — Streamlit app
 
 One file. No React, no component library, no build step.
 
@@ -144,7 +146,7 @@ streamlit run app.py
 
 ---
 
-## Phase 5 — Write-up ⬜ *next*
+## Phase 5 — Write-up
 
 Maps directly to the five deliverables in the brief.
 
@@ -154,13 +156,13 @@ Maps directly to the five deliverables in the brief.
 - [ ] LLM explanation samples
 - [ ] **AI / non-AI boundary write-up**, with the invariance table as evidence
 
-**State plainly, do not bury:**
+Points to state plainly:
 
 - Chargebacks are architecturally supported but **unevaluated** — no public dataset
   carries disputes, and synthetic labels would measure our generator, not our model.
   Declining to report those numbers *is* the honesty bar being met.
 - Source is a **UK wholesale gift retailer**. Median order £304, customers mostly
-  businesses, so return behaviour is B2B-flavoured. Amounts stay in GBP.
+  businesses, so return behaviour is B2B-flavoured. Amounts are stored in GBP and displayed in INR at a labelled 2009–2011 rate.
 - 22.8% of source rows have no customer ID and are excluded entirely.
 - No payment method, addresses or discount data exist in the source, so those
   planned features do not exist. `payments.method` is a constant and is excluded
@@ -181,7 +183,6 @@ Streamlit app already calls: `POST /risk/score`, `GET /risk/scores/{id}/explanat
 ```
 ai-risk-manager/
 ├── README.md                            the public explainer (GitHub landing page)
-├── CLAUDE.md                            project context for Claude Code
 ├── BUILD_PLAN.md                        this file
 ├── .env                                 secrets — NEVER committed
 ├── .env.example                         template — committed
@@ -196,7 +197,6 @@ ai-risk-manager/
 ├── predict.py                           the ONE scoring path
 ├── score_to_db.py                       joins phase 2 into the database
 ├── explain.py                           phase 3
-├── app.py                               phase 4
 ├── app.py                               phase 4
 │
 ├── AI_Risk_Manager_schema_v3.sql        30 tables, SQLite + Postgres

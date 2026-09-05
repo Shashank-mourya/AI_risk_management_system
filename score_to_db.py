@@ -1,35 +1,30 @@
 """
-AI Risk Manager
-Step 4: score the held-out orders and write them into risk.db.
-
-Run AFTER build_database.py and notebooks/train_model.ipynb.
+Step 4: score the held-out orders and write them into risk.db. Run after
+build_database.py and the training notebook.
 
     python score_to_db.py
 
-WHY THIS STEP EXISTS
---------------------
-Phase 1 built the database. Phase 2 trained the model. Nothing joined them:
+The database and the model were built separately and nothing joined them:
 `models`, `threshold_config`, `risk_scores` and `risk_score_features` were all
-empty, so the scoring half of a 30-table schema was decoration.
+empty, so the scoring half of a 30-table schema was decoration. That gap matters
+downstream too - risk_explanations.score_id is a foreign key onto
+risk_scores(id), so the explanation cache has nothing to key on until scores
+exist.
 
-That gap is load-bearing for Phase 3. `risk_explanations.score_id` is a foreign
-key onto `risk_scores(id)`, so an explanation cache has nothing to key on until
-scores exist. This script is the seam.
+Writes:
 
-WHAT IT WRITES
---------------
     models                1    the shipped model, with its feature list
     threshold_config      1    the operating point, marked is_current
     risk_scores       6,070    one per held-out order
     risk_score_features         17 per score - the exact vector the model saw,
                                 with each feature's signed contribution
 
-Only the TEST split is scored. Writing train scores would put numbers in the
-database that the model has already seen, and someone would eventually compute
-a metric over the whole table and report it.
+Test split only. Writing train scores would put numbers the model has already
+seen into the database, and sooner or later someone computes a metric over the
+whole table and reports it.
 
-The script is idempotent: it clears the four tables it owns and rewrites them,
-so re-running after a retrain does not accumulate stale scores.
+Idempotent: it clears the four tables it owns and rewrites them, so re-running
+after a retrain does not accumulate stale scores.
 """
 
 import hashlib
@@ -109,8 +104,8 @@ def main():
     # Idempotent: drop what this script owns, children before parents.
     #
     # This list was wrong: `model_feature_importance` and `evaluations` both
-    # reference models(id) and were missing, so a SECOND run against the same
-    # database died on a FOREIGN KEY constraint. It looked idempotent only
+    # reference models(id) and were missing, so a second run against the same
+    # database died on a foreign key constraint. It looked idempotent only
     # because every earlier run happened to follow a fresh build_database.py.
     # Every dependent of the four tables below is now accounted for:
     #
@@ -125,7 +120,7 @@ def main():
               "threshold_config", "models"):
         con.execute(f"DELETE FROM {q(t)}")
 
-    # ------------------------------------------------------------- the model
+    # --- the model
     model_id = _id("mdl", algorithm, meta["chosen_threshold"],
                    ",".join(meta["features"]))
     train_until = int(pd.Timestamp(meta["holdout"]["split_date"]).timestamp())
@@ -146,7 +141,7 @@ def main():
                  zip(meta["features"], scorer.model.coef_[0]),
                  key=lambda t: abs(t[1]), reverse=True))])
 
-    # -------------------------------------------------------- the threshold
+    # --- the threshold
     # threshold_low is the operating point; threshold_high is where the high
     # band starts. Both come from predict.py so the database cannot disagree
     # with the scorer about where a band boundary is.
@@ -160,7 +155,7 @@ def main():
          f"Analytic break-even {meta.get('analytic_break_even')}.",
          None, 1, now))
 
-    # ----------------------------------------------------------- the scores
+    # --- the scores
     X = test[meta["features"]].to_numpy(float)
     t0 = time.perf_counter()
     p = scorer.score_batch(X)
@@ -198,7 +193,7 @@ def main():
         "INSERT INTO risk_score_features VALUES (?,?,?,?)", feat_rows)
     con.commit()
 
-    # ---------------------------------------------------------------- verify
+    # --- verify
     print(f"\n{'='*62}\n  SCORES WRITTEN TO risk.db\n{'='*62}")
     print(f"  model            {model_id}  ({algorithm})")
     print(f"  threshold        {thr_id}  @ {scorer.threshold}")

@@ -15,6 +15,13 @@ features.csv
 threshold.json
 threshold_sweep.csv
 
+# node
+# Nothing here needs npm: the page loads Chart.js from a CDN and there is no
+# build step. `npm install streamlit` was a mistake - that npm package is an
+# empty placeholder, unrelated to the Python Streamlit this repo runs on - and
+# it committed a node_modules/ holding two files and no code.
+node_modules/
+
 # python
 .venv/
 __pycache__/
@@ -25,7 +32,18 @@ __pycache__/
 .DS_Store
 
 # model artefacts (regenerable by notebooks/train_model.ipynb)
-artefacts/
+#
+# artefacts/* , not artefacts/ : git cannot re-include a file whose parent
+# DIRECTORY is excluded, so with `artefacts/` the four negations below were
+# dead lines and the four files the Vercel deployment needs were silently left
+# out of every commit. Excluding the contents instead leaves the directory
+# itself visible to the negations.
+artefacts/*
+# ... but the Vercel deployment needs these small files committed:
+!artefacts/model.joblib
+!artefacts/scaler.joblib
+!artefacts/threshold.json
+!artefacts/threshold_sweep.csv
 
 # synthetic rehearsal data: the .csv IS tracked (needed to upload to Kaggle),
 # the .pkl is not (regenerable by make_synthetic_dataset.py)

@@ -1,24 +1,16 @@
 """
-AI Risk Manager
-Phase 4: the demo surface.
+Streamlit demo surface.
 
     streamlit run app.py
 
-One file. No React, no component library, no build step.
+One file, no build step. The threshold tab is the point of it: move the cost
+assumptions and watch the optimal operating point move with them, which is the
+argument that the threshold is a business decision the cost model settles rather
+than a constant the model emits.
 
-THE POINT OF THIS APP
----------------------
-Not "here is a model". The threshold tab is the argument: a reviewer moves the
-cost assumptions and watches the optimal operating point move with them. That
-makes the case that the threshold is a business decision the cost model settles,
-not a constant the model emits - which is the graded bar on this track.
-
-WHAT IT DOES NOT DO
--------------------
-It does not take actions. A score produces a RECOMMENDATION; acting on one needs
-a named reviewer (hard rule #6). And nothing the explanation layer returns can
-change a score (hard rule #4) - the app renders the decision from predict.py and
-the prose from explain.py separately, and never reconciles them.
+It takes no actions. A score produces a recommendation, and acting on one needs
+a named reviewer. The decision comes from predict.py and the prose from
+explain.py; the app renders them separately and never reconciles them.
 """
 
 import json
@@ -44,7 +36,7 @@ FEATURES_PKL = os.path.join(ROOT, "features.pkl")
 st.set_page_config(page_title="AI Risk Manager - Return Risk",
                    page_icon="📦", layout="wide")
 
-# ---------------------------------------------------------------- palette
+# --- palette
 # Validated categorical/diverging steps (see the data-viz reference palette).
 # Dark steps are selected for the dark surface, not an automatic flip.
 LIGHT = dict(surface="#fcfcfb", ink="#0b0b0b", ink2="#52514e", grid="#dcdbd6",
@@ -77,7 +69,7 @@ def style_axes(ax, t):
     ax.set_axisbelow(True)
 
 
-# ------------------------------------------------------------------ loading
+# --- loading
 @st.cache_resource
 def load_scorer():
     return Scorer()
@@ -114,7 +106,7 @@ tab_score, tab_cost, tab_metrics = st.tabs(
     ["Score an order", "Cost & threshold", "Held-out evidence"])
 
 
-# ========================================================== 1 SCORE AN ORDER
+# === 1 score an order
 with tab_score:
     te, p_test, y_test = test_predictions()
     t = theme()
@@ -159,10 +151,18 @@ with tab_score:
                 "Line items", value=int(row.n_lines), step=1, min_value=1)
             order["total_quantity"] = st.number_input(
                 "Total quantity", value=int(row.total_quantity), step=1)
+            # Unit prices are amounts too, so they are displayed in the same
+            # currency as the order value directly above them. They used to be
+            # the only two unlabelled numbers on a page captioned "amounts in
+            # INR", which read as GBP figures wearing a rupee page's clothes.
             order["mean_unit_price"] = st.number_input(
-                "Mean unit price", value=float(row.mean_unit_price), step=0.5)
+                "Mean unit price (INR)",
+                value=float(row.mean_unit_price) * cm.GBP_TO_INR,
+                step=10.0) / cm.GBP_TO_INR
             order["max_unit_price"] = st.number_input(
-                "Max unit price", value=float(row.max_unit_price), step=0.5)
+                "Max unit price (INR)",
+                value=float(row.max_unit_price) * cm.GBP_TO_INR,
+                step=10.0) / cm.GBP_TO_INR
             order["is_uk"] = int(st.checkbox("United Kingdom", value=bool(row.is_uk)))
         with c2:
             order["customer_prior_orders"] = st.number_input(
@@ -182,12 +182,25 @@ with tab_score:
             order["customer_tenure_days"] = st.number_input(
                 "Customer tenure (days)", value=float(row.customer_tenure_days),
                 step=10.0)
+            # The sliders span the full [0, 1] a rate can take, but the data
+            # occupies a sliver of it - the worst SKU in any held-out basket
+            # returns 16% of the time. Dialling past that is extrapolation, so
+            # say where the data stops instead of letting the slider imply the
+            # model has an opinion out there.
+            def _range_help(col):
+                v = te[col]
+                return (f"Observed on held-out orders: {v.min():.3f}-{v.max():.3f} "
+                        f"(median {v.median():.3f}). Beyond that the model is "
+                        "extrapolating.")
+
             order["basket_sku_return_rate"] = st.slider(
                 "Basket mean SKU return rate", 0.0, 1.0,
-                float(row.basket_sku_return_rate), 0.005)
+                float(row.basket_sku_return_rate), 0.005,
+                help=_range_help("basket_sku_return_rate"))
             order["basket_max_sku_return_rate"] = st.slider(
                 "Basket worst SKU return rate", 0.0, 1.0,
-                float(row.basket_max_sku_return_rate), 0.005)
+                float(row.basket_max_sku_return_rate), 0.005,
+                help=_range_help("basket_max_sku_return_rate"))
             order["hour_of_day"] = st.slider("Hour of day", 0, 23,
                                              int(row.hour_of_day))
 
@@ -195,14 +208,24 @@ with tab_score:
         order["price_vs_sku_mean"] = float(row.price_vs_sku_mean)
         order["log_order_value"] = float(np.log1p(max(order["order_value"], 0)))
 
+        # customer_prior_returns counts prior ORDERS observed returned, so it
+        # cannot exceed customer_prior_orders - build_features.py asserts
+        # exactly that. Clamping only the ratio, as this did, still handed the
+        # model a returns count it has never seen beside that order count.
+        prior_orders = order["customer_prior_orders"]
+        if order["customer_prior_returns"] > prior_orders:
+            st.caption(f"Prior returns clamped to {prior_orders}: they count "
+                       "prior ORDERS observed returned, so they cannot exceed "
+                       "the prior order count.")
+            order["customer_prior_returns"] = prior_orders
+
         # The sentinel is a state, not a number. If the customer has no history
         # the rate must stay -1; imputing 0 would say "never returned", which is
         # a different and much safer-looking claim.
-        prior_orders = order["customer_prior_orders"]
         order["is_new_customer"] = int(prior_orders == 0)
         order["customer_prior_return_rate"] = (
             -1.0 if prior_orders == 0
-            else min(order["customer_prior_returns"], prior_orders) / prior_orders)
+            else order["customer_prior_returns"] / prior_orders)
         if prior_orders == 0:
             st.caption("No prior orders → `customer_prior_return_rate = -1` "
                        "(cold start, **not** 'never returned')")
@@ -279,7 +302,7 @@ with tab_score:
                                "score_to_db.py.")
                 else:
                     con = ex.connect(DB)
-                    # Explanations are cached against SCORED orders in the
+                    # Explanations are cached against scored orders in the
                     # database. A hand-edited order has no score row, so the
                     # stored score for this invoice is used.
                     r = con.execute(
@@ -311,7 +334,7 @@ with tab_score:
                                 "The score above is unchanged. A failure in this "
                                 "layer removes prose, never a decision.")
             except Exception as e:  # noqa: BLE001
-                # Redact here too: this path catches errors raised BEFORE
+                # Redact here too: this path catches errors raised before
                 # ex.explain got the chance to scrub them.
                 try:
                     msg = ex.redact(f"{type(e).__name__}: {e}")
@@ -324,7 +347,7 @@ with tab_score:
                     con.close()
 
 
-# ======================================================= 2 COST & THRESHOLD
+# === 2 cost & threshold
 with tab_cost:
     te, p_test, y_test = test_predictions()
     t = theme()
@@ -364,17 +387,19 @@ with tab_cost:
                            cm.CONTRIBUTION_MARGIN_RATE, 0.01)
 
     # The sliders are denominated in INR; the cost model is denominated in
-    # pence, because pence is what the source data is measured in. Convert
-    # once, here, with the same rate cost_model.py displays with.
-    def _to_pence(rupees):
-        return rupees * 100.0 / cm.GBP_TO_INR
-
-    v_ret_p, v_kept_p = _to_pence(v_ret), _to_pence(v_kept)
-    c_return = (v_ret_p * (1 - recovery) + v_ret_p * cm.PSP_FEE_RATE
-                + _to_pence(logistics))
-    c_friction = v_kept_p * abandon * margin
-    c_review = _to_pence(review)
-    p_star = (c_review + c_friction) / (c_friction + c_return * prevention)
+    # pence, because pence is what the source data is measured in. Both the
+    # conversion and the arithmetic that follows it live in cost_model.py -
+    # this used to be a local transcription of both, with a second, subtly
+    # different transcription in api/index.py.
+    c_review, c_friction, c_return = cm.derive_costs(
+        v_returned_pence=cm.inr_to_pence(v_ret),
+        v_kept_pence=cm.inr_to_pence(v_kept),
+        recovery=recovery,
+        logistics_pence=cm.inr_to_pence(logistics),
+        review_pence=cm.inr_to_pence(review),
+        abandon=abandon,
+        margin=margin)
+    p_star = cm.analytic_break_even(c_review, c_friction, c_return, prevention)
 
     grid = np.round(np.arange(0.01, 0.995, 0.01), 4)
     costs = np.array([
@@ -462,7 +487,7 @@ with tab_cost:
                    "and how well intervention works.")
 
 
-# ======================================================= 3 HELD-OUT EVIDENCE
+# === 3 held-out evidence
 with tab_metrics:
     te, p_test, y_test = test_predictions()
     h = meta["holdout"]

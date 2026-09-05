@@ -1,24 +1,19 @@
 """
-AI Risk Manager
-Step 2: build the as-of feature matrix.
-
-Run AFTER build_labels.py.
+Step 2: build the as-of feature matrix. Run after build_labels.py.
 
     python build_features.py
 
-THE ONE RULE IN THIS FILE
--------------------------
-Every feature for an order placed at time T is computed only from events that
-had already HAPPENED by time T. Not from orders that were merely placed before
-T — from outcomes actually observed before T.
+The rule the whole file exists to enforce: every feature for an order placed at
+time T uses only events that had already happened by T. Not orders merely placed
+before T - outcomes actually observed before T.
 
-That distinction is the whole game. A customer's third order does not "know"
-that their first order was returned unless the return itself occurred before
-the third order was placed. Counting an eventual label as if it were known at
-purchase time is target leakage, and it is invisible to a chronological split.
+A customer's third order does not "know" their first was returned unless the
+return itself occurred before the third order was placed. Counting an eventual
+label as though it were known at purchase time is target leakage, and a
+chronological split will not catch it.
 
 Outputs
-    features.pkl / features.csv    30,347 rows x 14 features + label + split
+    features.pkl / features.csv    30,347 rows x 17 features + label + split
 """
 
 import numpy as np
@@ -33,8 +28,8 @@ def main():
     df = pd.read_pickle("retail2.pkl")
     orders = pd.read_pickle("orders_labeled.pkl")
 
-    # ---------------------------------------------------------------- returns
-    # Rebuild the purchase->return matches so we have RETURN DATES, which is
+    # --- returns
+    # Rebuild the purchase->return matches so we have return dates, which is
     # what "already happened" is measured against.
     purchases = df[(~df.isC) & (df.Quantity > 0) & df.CustomerID.notna()].copy()
     returns   = df[( df.isC) & (df.Quantity < 0) & df.CustomerID.notna()].copy()
@@ -47,12 +42,12 @@ def main():
     pairs = pairs[pairs.InvoiceDate_p < pairs.InvoiceDate_r]
     pairs = pairs.sort_values("InvoiceDate_p").groupby("ridx", as_index=False).last()
     pairs["gap_days"] = (pairs.InvoiceDate_r - pairs.InvoiceDate_p).dt.total_seconds() / 86400
-    # The SAME window the label uses. Counting a wider set of events as "prior
+    # The same window the label uses. Counting a wider set of events as "prior
     # returns" than the label counts as "returned" would make the feature and
     # the target disagree about the word.
     pairs = genuine_returns(pairs)
 
-    # ------------------------------------------------------- order-level base
+    # --- order-level base
     purchases["line_value"] = purchases.Quantity * purchases.Price
     agg = purchases.groupby("Invoice").agg(
         mean_unit_price=("Price", "mean"),
@@ -65,9 +60,9 @@ def main():
     orders["is_uk"] = (orders.country == "United Kingdom").astype(int)
     orders["log_order_value"] = np.log1p(orders.order_value.clip(lower=0))
 
-    # ------------------------------------------- customer history, true as-of
-    # For each order, count the customer's PRIOR ORDERS and PRIOR OBSERVED
-    # RETURNS. Prior returns are counted by the date the return happened, not
+    # --- customer history, true as-of
+    # For each order, count the customer's prior orders and prior observed
+    # returns. Prior returns are counted by the date the return happened, not
     # by the eventual label of an earlier order.
     orders = orders.sort_values("order_date").reset_index(drop=True)
 
@@ -78,19 +73,19 @@ def main():
     orders["customer_tenure_days"] = (
         orders.order_date - first_seen).dt.total_seconds() / 86400
 
-    # Prior observed returns, counted at ORDER granularity.
+    # Prior observed returns, counted at order granularity.
     #
     # `pairs` is line-level: an order that sends back five stock codes produces
     # five rows. Counting those directly against customer_prior_orders (an
     # order count) mixes units, and the resulting "rate" is not a rate - it
     # reached 45.0 on this dataset. So collapse to one event per returned
-    # purchase order, dated at the EARLIEST line that came back, which is when
+    # purchase order, dated at the earliest line that came back, which is when
     # the merchant first observed that order unwinding.
     #
     # The inner merge restricts the numerator to the same labelled order
     # population the denominator counts, which is what bounds the rate to
-    # [0, 1]. Only the return's occurrence DATE is used - never an order's
-    # eventual label - so hard rule #1 still holds.
+    # [0, 1]. Only the return's occurrence date is used - never an order's
+    # eventual label, so the as-of rule still holds.
     order_return_date = (pairs.groupby("Invoice").InvoiceDate_r.min()
                               .rename("return_observed_at"))
     observed = orders[["Invoice", "customer_id"]].merge(
@@ -118,10 +113,10 @@ def main():
             <= orders.customer_prior_orders).all(), "prior returns exceed prior orders"
     orders["is_new_customer"] = (orders.customer_prior_orders == 0).astype(int)
 
-    # ------------------------------------------------- product-level baseline
-    # Per-SKU historical return rate, built AS OF THE SPLIT DATE.
+    # --- product-level baseline
+    # Per-SKU historical return rate, built as of the split date.
     #
-    # The earlier version used train-period purchases and their EVENTUAL
+    # The earlier version used train-period purchases and their eventual
     # outcomes. 7.3% of those returns were observed after the split date, so a
     # test order was being scored with knowledge of returns that had not
     # happened when it was placed. The comment claimed "nothing from the test
@@ -129,7 +124,7 @@ def main():
     # outcomes.
     #
     # Both sides are now cut at the split boundary: only purchases made before
-    # it, and only returns OBSERVED before it. That is exactly what a model
+    # it, and only returns observed before it. That is exactly what a model
     # deployed on the split date would have had. It goes mildly stale across the
     # test window, which is the honest direction - a production model has the
     # same staleness between retrains.
@@ -162,7 +157,7 @@ def main():
         purchases.groupby("Invoice").price_ratio.mean().rename("price_vs_sku_mean"),
         left_on="Invoice", right_index=True, how="left")
 
-    # ------------------------------------------------------------------ emit
+    # --- emit
     out = orders[["Invoice", "customer_id", "order_date", "split", "returned"]
                  + FEATURES].copy()
     out["returned"] = out.returned.astype(int)

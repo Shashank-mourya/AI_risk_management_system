@@ -1,7 +1,5 @@
 """
-AI Risk Manager
-The scoring path. One module, imported by everything that needs a score:
-score_to_db.py, explain.py, the Streamlit app, and (if it gets built) FastAPI.
+The scoring path. Imported by score_to_db.py, explain.py and the app.
 
     from predict import Scorer
     s = Scorer()
@@ -9,49 +7,32 @@ score_to_db.py, explain.py, the Streamlit app, and (if it gets built) FastAPI.
     -> {"risk_probability": 0.42, "risk_band": "medium",
         "recommendation": "manual_review", ...}
 
-WHY THIS EXISTS
----------------
-The scoring logic used to live inline in test_model.py, with a second copy in
-evaluate_model.py. One of them carried a comment saying "the single scoring
-path; everything else in the repo should call this" - while sitting inside a
-test file that nothing imports. Same failure as the cost model: the intent was
-right and the wiring was not.
+This logic used to sit inline in test_model.py with a second copy in
+evaluate_model.py, one of them carrying a comment calling itself "the single
+scoring path" while living in a test file nothing imports.
 
-THE VOCABULARY IS THE SCHEMA'S, NOT OURS
-----------------------------------------
-`AI_Risk_Manager_schema_v3.sql` constrains what may be written:
+The vocabulary is the schema's. AI_Risk_Manager_schema_v3.sql constrains what
+can be written:
 
     risk_band       IN ('low','medium','high')
     recommendation  IN ('allow','manual_review','hold_payout','request_verification')
 
-The earlier inline version emitted 'approve' / 'review' / 'hold_for_review',
-none of which are legal values. Nothing caught it because nothing had ever
-written a score to the database. Every recommendation this module returns is a
-value the CHECK constraint accepts.
+The old inline version emitted 'approve' / 'review' / 'hold_for_review', none of
+which are legal values; nothing caught it because nothing had ever written a
+score to the database.
 
-HARD RULE #4 - THE LLM NEVER DECIDES
-------------------------------------
-This module is the only thing that produces `risk_probability`, `risk_band` and
-`recommendation`. `explain.py` reads a finished score and writes prose. There is
-no code path from generated text back into any field here, and there must not
-be one - it is a graded deliverable.
+This module is the only thing that produces risk_probability, risk_band and
+recommendation. explain.py reads a finished score and writes prose - there is no
+path from generated text back into any field here, and there must not be one.
+What comes back is a recommendation: acting on it needs a named reviewer_id in
+the reviews table. Nothing here takes an action.
 
-HARD RULE #6 - HUMAN IN THE LOOP
---------------------------------
-What comes back is a RECOMMENDATION. Acting on it needs a named reviewer_id in
-the `reviews` table. Nothing here takes an action.
-
-TRUST BOUNDARY
---------------
-`joblib.load` unpickles, and unpickling executes arbitrary code. The artefacts
-in artefacts/ are produced locally by notebooks/train_model.ipynb and are
-gitignored, so the file this loads is one this machine wrote - but if you ever
-accept a model.joblib from somewhere else, that is code execution, not data
-loading. Do not add a "download the model" path without signing the artefact.
-
-The same applies to `pd.read_pickle` on features.pkl and retail2.pkl. The .rda
-that everything descends from IS pinned by SHA-256 in config.py, so the input to
-the chain is verified even though the intermediates are not.
+One caveat on trust: joblib.load unpickles, and unpickling executes arbitrary
+code. The artefacts in artefacts/ are produced locally by the training notebook
+and are gitignored, so the file this loads is one this machine wrote. Don't add
+a "download the model" path without signing the artefact. Same applies to
+pd.read_pickle on features.pkl and retail2.pkl - only the .rda everything
+descends from is pinned by SHA-256 in config.py.
 """
 
 import json
@@ -66,8 +47,8 @@ from config import ART_DIR, MODEL_PATH, SCALER_PATH, THRESHOLD_PATH
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 
-# --------------------------------------------------------------------- bands
-# Bands are defined RELATIVE to the operating threshold, so they move with it.
+# --- bands
+# Bands are defined relative to the operating threshold, so they move with it.
 # A band is not an independent opinion about risk; it is a restatement of where
 # the score sits against the point the cost model chose.
 BAND_LOW, BAND_MEDIUM, BAND_HIGH = "low", "medium", "high"
@@ -137,7 +118,7 @@ class Scorer:
         # ones. Callers that report metrics should check this.
         self.reportable = bool(self.meta.get("REPORTABLE", False))
 
-    # ------------------------------------------------------------- internals
+    # --- internals
     def _matrix(self, X):
         X = np.asarray(X, dtype=float)
         if X.ndim == 1:
@@ -155,11 +136,11 @@ class Scorer:
         missing = [f for f in self.features if f not in order]
         if missing:
             raise KeyError(f"missing features: {missing}")
-        # Built by NAME, so caller key order is irrelevant. Positional callers
+        # Built by name, so caller key order is irrelevant. Positional callers
         # must supply the list in self.features order.
         return np.array([[float(order[f]) for f in self.features]])
 
-    # ---------------------------------------------------------------- public
+    # --- public
     def score_batch(self, X):
         """Probabilities for a 2-D array of feature rows, in `features` order."""
         X = self._matrix(X)

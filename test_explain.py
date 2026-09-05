@@ -1,28 +1,25 @@
 """
-AI Risk Manager
-Phase 3 acceptance suite. Verifies the AI/non-AI boundary.
+Acceptance suite for the explanation layer. Run after score_to_db.py.
 
     python test_explain.py
 
-Run AFTER score_to_db.py. Needs NO API key: every model call is stubbed, which
-is the point - the boundary has to hold regardless of what a model returns, so
-testing it against a real model would be weaker, not stronger.
+No API key needed - every model call is stubbed, which is the point: the
+boundary has to hold regardless of what a model returns, so testing against a
+live model would be weaker, not stronger.
 
-WHAT THIS TESTS
----------------
   1  wiring            - the score a paragraph is written about actually exists
   2  prompt            - deterministic, and carries no outcome label
-  3  ADVERSARIAL LLM   - a model actively trying to change the decision fails
+  3  adversarial model - a model actively trying to change the decision fails
   4  failure mode      - an error removes prose, never a decision
   5  cache             - keyed on score_id, not regenerated, invalidated on drift
   6  retry             - 429 is retried with backoff before giving up
   7  no writes         - the explanation layer cannot write to risk_scores
 
-CHECK 3 IS THE IMPORTANT ONE. CLAUDE.md hard rule #4 says there is no code path
-where generated text can alter risk_probability, risk_band or recommendation.
-This feeds the layer a model whose every response is an explicit attempt to do
-exactly that - JSON overrides, prose contradictions, injected instructions -
-and requires that the decision comes back bit-identical every time.
+Check 3 is the important one. There is no code path where generated text can
+alter risk_probability, risk_band or recommendation, so this feeds the layer a
+model whose every response is an explicit attempt to do exactly that - JSON
+overrides, prose contradictions, injected instructions - and requires the
+decision back bit-identical every time.
 """
 
 import os
@@ -42,7 +39,7 @@ def check(name, condition, detail=""):
     return bool(condition)
 
 
-# --------------------------------------------------------------- stub clients
+# --- stub clients
 class _Msg:
     def __init__(self, content): self.message = type("M", (), {"content": content})()
 
@@ -119,7 +116,7 @@ def main():
     sid = con.execute("SELECT id FROM risk_scores WHERE risk_band='high' "
                       "ORDER BY risk_probability DESC LIMIT 1").fetchone()["id"]
 
-    # ------------------------------------------------------------- 1 wiring
+    # --- 1 wiring
     print("\n1 - wiring")
     row, feats = ex.load_score(con, sid)
     check("the score exists and loads", row is not None)
@@ -134,7 +131,7 @@ def main():
     except ex.ExplanationError:
         check("a missing score raises ExplanationError", True)
 
-    # ------------------------------------------------------------- 2 prompt
+    # --- 2 prompt
     print("\n2 - prompt")
     p1, p2 = ex.render_prompt(row, feats), ex.render_prompt(row, feats)
     check("prompt rendering is deterministic", p1 == p2)
@@ -147,8 +144,8 @@ def main():
     check("the prompt states the decision it must not change",
           row["recommendation"] in p1 and row["risk_band"] in p1)
 
-    # ------------------------------------------- 3 ADVERSARIAL MODEL (rule #4)
-    print("\n3 - adversarial model cannot move the decision (hard rule #4)")
+    # --- 3 adversarial model
+    print("\n3 - adversarial model cannot move the decision")
     before = dict(con.execute(
         "SELECT risk_probability, risk_band, recommendation, threshold_applied "
         "FROM risk_scores WHERE id=?", (sid,)).fetchone())
@@ -184,7 +181,7 @@ def main():
           (out2["risk_probability"], out2["risk_band"], out2["recommendation"])
           == (out["risk_probability"], out["risk_band"], out["recommendation"]))
 
-    # --------------------------------------------------------- 4 failure mode
+    # --- 4 failure mode
     print("\n4 - failure mode is a missing paragraph, never a changed score")
 
     class Broken:
@@ -212,7 +209,7 @@ def main():
     check("an empty response is a failure, not an empty explanation",
           out4["status"] == "failed" and out4["explanation"] is None)
 
-    # ---------------------------------------------------------------- 5 cache
+    # --- 5 cache
     print("\n5 - cache")
     counter = {"n": 0}
 
@@ -238,7 +235,7 @@ def main():
     check("a cache entry written against a different score is not served",
           fourth["cached"] is False and counter["n"] == 3)
 
-    # ------------------------------------------------------ 6 retry / backoff
+    # --- 6 retry / backoff
     print("\n6 - 429 is retried with backoff before giving up")
     flaky = FlakyClient(n_failures=2, text="survived the rate limit")
     text = ex.call_llm("prompt", model="stub/flaky", client=flaky)
@@ -255,7 +252,7 @@ def main():
               hopeless.attempts == ex.MAX_ATTEMPTS,
               f"{hopeless.attempts} attempts vs MAX_ATTEMPTS={ex.MAX_ATTEMPTS}")
 
-    # ------------------------------------------------- 7 no writes to scoring
+    # --- 7 no writes to scoring
     print("\n7 - the explanation layer cannot write to the scoring tables")
     src = open(os.path.join(ROOT, "explain.py"), encoding="utf-8").read().lower()
     for verb in ("update risk_scores", "insert into risk_scores",
@@ -281,7 +278,7 @@ def main():
             print(f"    - {f}")
     else:
         print("\n  The decision is invariant under anything the model returns.")
-        print("  Hard rule #4 holds by construction, not by convention.")
+        print("  The boundary holds by construction, not by convention.")
     print("=" * 74)
     return 1 if _FAIL else 0
 

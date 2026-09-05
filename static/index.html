@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="AI Risk Manager — return-risk scorer for e-commerce order risk assessment. Score orders, explore cost-driven thresholds, and review held-out model evidence.">
+    <title>AI Risk Manager — Return Risk Scorer</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📦</text></svg>">
+    <link rel="stylesheet" href="/static/style.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+</head>
+<body>
+
+<!-- header -->
+<header class="app-header">
+    <h1>AI Risk Manager — return-risk scorer</h1>
+    <div class="subtitle" id="header-subtitle">Loading…</div>
+    <div id="synthetic-badge" class="synthetic-badge" style="display:none;">
+        ⚠️ SYNTHETIC DATA — no number on this page is reportable
+    </div>
+</header>
+
+<!-- tabs -->
+<nav class="tabs" role="tablist">
+    <button class="tab-btn active" data-tab="score" role="tab" aria-selected="true" id="tab-btn-score">Score an order</button>
+    <button class="tab-btn" data-tab="cost" role="tab" aria-selected="false" id="tab-btn-cost">Cost &amp; threshold</button>
+    <button class="tab-btn" data-tab="metrics" role="tab" aria-selected="false" id="tab-btn-metrics">Held-out evidence</button>
+</nav>
+
+<!-- tab 1: score an order -->
+<section class="tab-content active" id="tab-score" role="tabpanel">
+    <div class="two-col">
+        <!-- LEFT: Order form -->
+        <div>
+            <h2>Order</h2>
+            <p class="caption" style="margin-bottom:16px;">
+                Enter the 17 features to score. All fields are required. The defaults are the
+                median held-out order, so the page opens on something the data actually contains.
+            </p>
+
+            <div class="card" id="order-form-card">
+                <div class="two-col" style="gap:16px;">
+                    <div>
+                        <div class="form-group">
+                            <label for="f-order_value">Order value (INR)</label>
+                            <input type="number" id="f-order_value" step="100" value="22684">
+                        </div>
+                        <div class="form-group">
+                            <label for="f-n_lines">Line items</label>
+                            <input type="number" id="f-n_lines" step="1" min="1" value="14">
+                        </div>
+                        <div class="form-group">
+                            <label for="f-total_quantity">Total quantity</label>
+                            <input type="number" id="f-total_quantity" step="1" value="157">
+                        </div>
+                        <div class="form-group">
+                            <label for="f-mean_unit_price">Mean unit price (INR)</label>
+                            <input type="number" id="f-mean_unit_price" step="10" value="209">
+                        </div>
+                        <div class="form-group">
+                            <label for="f-max_unit_price">Max unit price (INR)</label>
+                            <input type="number" id="f-max_unit_price" step="10" value="638">
+                        </div>
+                        <div class="form-group">
+                            <label for="f-price_vs_sku_mean">Price vs SKU mean</label>
+                            <input type="number" id="f-price_vs_sku_mean" step="0.05" value="0.97">
+                        </div>
+                        <div class="checkbox-group">
+                            <input type="checkbox" id="f-is_uk" checked>
+                            <label for="f-is_uk">United Kingdom</label>
+                        </div>
+                    </div>
+                    <div>
+                        <div class="form-group">
+                            <label for="f-customer_prior_orders">Customer's prior orders</label>
+                            <input type="number" id="f-customer_prior_orders" step="1" min="0" value="9">
+                            <div class="hint">Orders placed BEFORE this one. Only already-placed orders count.</div>
+                        </div>
+                        <div class="form-group">
+                            <label for="f-customer_prior_returns">Prior returns</label>
+                            <input type="number" id="f-customer_prior_returns" step="1" min="0" value="1">
+                            <div class="hint">Orders with at least one returned item. Cannot exceed prior orders.</div>
+                        </div>
+                        <div class="form-group">
+                            <label for="f-customer_tenure_days">Customer tenure (days)</label>
+                            <input type="number" id="f-customer_tenure_days" step="10" value="474">
+                        </div>
+                        <div class="form-group">
+                            <label for="f-basket_sku_return_rate">Basket mean SKU return rate</label>
+                            <input type="range" id="f-basket_sku_return_rate" min="0" max="1" step="0.005" value="0.015">
+                            <span class="range-value" id="rv-basket_sku_return_rate">0.015</span>
+                            <div class="hint">Observed range on held-out orders: 0.000-0.156 (median 0.014). Above that the model is extrapolating.</div>
+                        </div>
+                        <div class="form-group">
+                            <label for="f-basket_max_sku_return_rate">Basket worst SKU return rate</label>
+                            <input type="range" id="f-basket_max_sku_return_rate" min="0" max="1" step="0.005" value="0.045">
+                            <span class="range-value" id="rv-basket_max_sku_return_rate">0.045</span>
+                            <div class="hint">Observed range on held-out orders: 0.000-0.163 (median 0.044). Above that the model is extrapolating.</div>
+                        </div>
+                        <div class="form-group">
+                            <label for="f-hour_of_day">Hour of day</label>
+                            <input type="range" id="f-hour_of_day" min="0" max="23" step="1" value="12">
+                            <span class="range-value" id="rv-hour_of_day">12</span>
+                        </div>
+                        <div class="form-group">
+                            <label for="f-day_of_week">Day of week (0=Mon)</label>
+                            <input type="range" id="f-day_of_week" min="0" max="6" step="1" value="3">
+                            <span class="range-value" id="rv-day_of_week">3</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="cold-start-note" class="callout callout-info" style="display:none; margin-top:12px;">
+                    <span class="icon">ℹ️</span>
+                    <span>No prior orders → <code>customer_prior_return_rate = -1</code> (cold start, <strong>not</strong> 'never returned')</span>
+                </div>
+
+                <button class="btn btn-primary" id="score-btn" style="margin-top:16px; width:100%;">
+                    Score this order
+                </button>
+            </div>
+        </div>
+
+        <!-- RIGHT: Result panel -->
+        <div>
+            <div id="score-result" class="result-panel">
+                <!-- populated by JS -->
+            </div>
+            <div id="score-placeholder" class="card" style="text-align:center; padding:60px 24px; color: var(--ink-3);">
+                <div style="font-size:2.5rem; margin-bottom:12px;">📦</div>
+                <p style="font-size:0.9rem;">Enter order features and click <strong>Score this order</strong> to see the decision.</p>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- tab 2: cost & threshold -->
+<section class="tab-content" id="tab-cost" role="tabpanel">
+    <h2>The threshold is a business decision</h2>
+    <p class="section-intro">
+        Move the cost assumptions and watch the optimum move. That is the whole argument:
+        <strong>0.5 is not a threshold, it is a default</strong> — and the right operating
+        point falls out of what a mistake costs, not out of the model.
+    </p>
+
+    <div class="three-col" style="margin-bottom:24px;">
+        <!-- Measured -->
+        <div class="card">
+            <h3>Measured <span style="font-weight:400; color:var(--ink-muted);">(training rows)</span></h3>
+            <div class="form-group">
+                <label for="c-v_ret">Median value, returned orders (INR)</label>
+                <input type="number" id="c-v_ret" step="100" value="">
+            </div>
+            <div class="form-group">
+                <label for="c-v_kept">Median value, kept orders (INR)</label>
+                <input type="number" id="c-v_kept" step="100" value="">
+            </div>
+        </div>
+
+        <!-- Assumed: cost of return -->
+        <div class="card">
+            <h3>Assumed — cost of a return</h3>
+            <div class="form-group">
+                <label for="c-recovery">Goods recovery rate</label>
+                <input type="range" id="c-recovery" min="0" max="1" step="0.01" value="0.65">
+                <span class="range-value" id="rv-c-recovery">0.65</span>
+            </div>
+            <div class="form-group">
+                <label for="c-logistics">Reverse logistics (INR)</label>
+                <input type="number" id="c-logistics" step="25" value="">
+            </div>
+            <div class="form-group">
+                <label for="c-prevention">Prevention rate</label>
+                <input type="range" id="c-prevention" min="0.01" max="1" step="0.01" value="0.30">
+                <span class="range-value" id="rv-c-prevention">0.30</span>
+            </div>
+        </div>
+
+        <!-- Assumed: cost of false alarm -->
+        <div class="card">
+            <h3>Assumed — cost of a false alarm</h3>
+            <div class="form-group">
+                <label for="c-review">Manual review, per flag (INR)</label>
+                <input type="number" id="c-review" step="25" value="">
+            </div>
+            <div class="form-group">
+                <label for="c-abandon">Abandon rate on false alarm</label>
+                <input type="range" id="c-abandon" min="0" max="0.5" step="0.01" value="0.08">
+                <span class="range-value" id="rv-c-abandon">0.08</span>
+            </div>
+            <div class="form-group">
+                <label for="c-margin">Contribution margin</label>
+                <input type="range" id="c-margin" min="0" max="1" step="0.01" value="0.22">
+                <span class="range-value" id="rv-c-margin">0.22</span>
+            </div>
+        </div>
+    </div>
+
+    <button class="btn btn-primary" id="recalc-cost-btn" style="margin-bottom:24px;">
+        Recalculate optimal threshold
+    </button>
+
+    <div class="four-col" id="cost-metrics" style="margin-bottom:24px;">
+        <!-- populated by JS -->
+    </div>
+
+    <div class="chart-container" id="cost-chart-container">
+        <canvas id="cost-chart" height="280"></canvas>
+    </div>
+
+    <p class="caption" id="cost-formula-caption" style="margin-top:8px;"></p>
+
+    <div id="cost-drift-callout" style="display:none;"></div>
+
+    <!-- Sensitivity analysis -->
+    <button class="sensitivity-toggle" id="sensitivity-toggle">
+        ▸ Which assumptions actually matter?
+    </button>
+    <div class="sensitivity-content" id="sensitivity-content">
+        <div class="card" style="margin-top:12px;">
+            <table class="data-table" id="sensitivity-table">
+                <thead>
+                    <tr><th>Assumption</th><th>Optimal threshold</th><th>Flag rate</th><th>Recall</th></tr>
+                </thead>
+                <tbody id="sensitivity-tbody"></tbody>
+            </table>
+            <p class="caption" style="margin-top:10px;">
+                Only two inputs really move the answer: what a return costs, and how well intervention works.
+            </p>
+        </div>
+    </div>
+</section>
+
+<!-- tab 3: held-out evidence -->
+<section class="tab-content" id="tab-metrics" role="tabpanel">
+    <h2>Held-out performance</h2>
+    <p class="caption" id="holdout-intro" style="margin-bottom:20px;"></p>
+
+    <div class="four-col" id="holdout-metrics" style="margin-bottom:24px;">
+        <!-- populated by JS -->
+    </div>
+
+    <div id="accuracy-callout" style="margin-bottom:24px;"></div>
+
+    <div class="two-col" style="margin-bottom:24px;">
+        <div class="card">
+            <h3 id="cm-title">Confusion matrix</h3>
+            <table class="confusion-matrix" id="confusion-table">
+                <thead>
+                    <tr><th></th><th>predicted keep</th><th>predicted return</th></tr>
+                </thead>
+                <tbody>
+                    <tr><th>actually kept</th><td class="cm-tn" id="cm-tn">—</td><td class="cm-fp" id="cm-fp">—</td></tr>
+                    <tr><th>actually returned</th><td class="cm-fn" id="cm-fn">—</td><td class="cm-tp" id="cm-tp">—</td></tr>
+                </tbody>
+            </table>
+        </div>
+        <div class="card">
+            <h3>Cost model inputs</h3>
+            <table class="data-table" id="cost-inputs-table">
+                <thead>
+                    <tr><th>Input</th><th>Value</th><th>Status</th></tr>
+                </thead>
+                <tbody id="cost-inputs-tbody"></tbody>
+            </table>
+        </div>
+    </div>
+
+    <hr>
+    <h3 style="margin-bottom:12px;">What this does not measure</h3>
+    <div class="prose" id="not-measured-prose">
+        <!-- populated by JS -->
+    </div>
+
+    <!-- Model selection expandable -->
+    <button class="sensitivity-toggle" id="model-selection-toggle" style="margin-top:20px;">
+        ▸ Model selection — why the simpler model shipped
+    </button>
+    <div class="sensitivity-content" id="model-selection-content">
+        <div class="card" style="margin-top:12px;">
+            <p class="prose" id="model-rationale"></p>
+            <p class="caption" id="model-selection-caption" style="margin-top:10px;"></p>
+        </div>
+    </div>
+</section>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

@@ -1,29 +1,23 @@
 """
-AI Risk Manager
-Full evaluation: edge-case robustness + held-out accuracy.
+Edge-case robustness plus held-out accuracy. Run after the training notebook has
+written artefacts/.
 
     python evaluate_model.py
     python evaluate_model.py --bootstrap 2000     # wider CIs, slower
 
-Run AFTER notebooks/train_model.ipynb has written artefacts/.
+Companion to test_model.py rather than a replacement:
 
-This is the companion to test_model.py, not a replacement:
+    test_model.py       invariants  - properties that hold whatever the data is
+    evaluate_model.py   part A      - edge cases: behaviour at the boundaries
+                        part B      - accuracy: what the model is actually worth
 
-    test_model.py       invariants  - properties that must hold, whatever the data
-    evaluate_model.py   PART A      - edge cases: what happens at the boundaries
-                        PART B      - accuracy: what the model is actually worth
+Part A is pass/fail and sets the exit code. Part B is measurement only - "is 0.74
+AUC good" is a judgement about the business, not an assertion about the code.
 
-PART A is pass/fail and sets the exit code. PART B is measurement - it has no
-pass/fail, because "is 0.74 AUC good" is a judgement about the business, not an
-assertion about the code.
-
-A NOTE ON THE WORD "ACCURACY"
------------------------------
-Accuracy is reported below because it is asked for, but it is the weakest number
-here. The held-out base rate is 17.6%, so a model that flags NOTHING is 82.4%
-accurate. Every accuracy figure is printed next to that floor so it cannot be
-read as an achievement on its own. CLAUDE.md picks the operating point on total
-cost, and so does this report.
+Accuracy is reported because people ask for it, but it is the weakest number
+here: the held-out base rate is 17.6%, so flagging nothing scores 82.4%. Every
+accuracy figure is printed next to that floor. The operating point is picked on
+total cost.
 """
 
 import argparse
@@ -47,7 +41,7 @@ ART_DIR = os.path.join(ROOT, "artefacts")
 REAL_DATA = os.path.join(ROOT, "features.pkl")
 SYNTHETIC_DATA = os.path.join(ROOT, "data", "synthetic_features.pkl")
 
-# --------------------------------------------------------------- cost model
+# --- cost model
 # Imported, never redefined. This file and the training notebook used to carry
 # two different cost models, which meant two different "optimal" thresholds
 # were simultaneously in the repo. cost_model.py is now the only definition.
@@ -79,7 +73,7 @@ def note(name, value):
     print(f"  [ .. ] {name}\n         {value}")
 
 
-# --------------------------------------------------------------- scoring path
+# --- scoring path
 # Both of these used to be a second implementation of predict.py. Edge cases
 # are only worth testing against the code that actually ships.
 _SCORER = None
@@ -102,7 +96,7 @@ def score_one(score, features, order: dict):
     return _scorer().score_order(order)["risk_probability"]
 
 
-# ============================================================ PART A: EDGE CASES
+# === PART A: edge cases
 def part_a(score, features, meta, test, X, y, p):
     thr = meta["chosen_threshold"]
     n_feat = len(features)
@@ -110,7 +104,7 @@ def part_a(score, features, meta, test, X, y, p):
 
     rule("PART A - EDGE CASES AND ROBUSTNESS")
 
-    # ---------------------------------------------------------------- shapes
+    # --- shapes
     print("\nA1 · input shapes")
     check("single row (2-D) scores", score(X[:1]).shape == (1,))
     check("single row (1-D) is accepted and reshaped", score(X[0]).shape == (1,))
@@ -130,7 +124,7 @@ def part_a(score, features, meta, test, X, y, p):
     except Exception as e:
         check("wrong feature count is rejected", True, type(e).__name__)
 
-    # ------------------------------------------------------- extreme values
+    # --- extreme values
     print("\nA2 · extreme and degenerate values")
     zeros = score(np.zeros((1, n_feat)))[0]
     check("all-zero row scores in [0,1]", 0.0 <= zeros <= 1.0, f"got {zeros}")
@@ -159,7 +153,7 @@ def part_a(score, features, meta, test, X, y, p):
             note(f"{label} input", f"rejected with {type(e).__name__} - correct: "
                                    f"the caller is forced to handle it")
 
-    # -------------------------------------------------- feature-order safety
+    # --- feature-order safety
     print("\nA3 · feature-order safety")
     row = dict(zip(features, med))
     shuffled = {k: row[k] for k in list(row)[::-1]}
@@ -183,7 +177,7 @@ def part_a(score, features, meta, test, X, y, p):
     check("unknown extra key is ignored",
           abs(score_one(score, features, extra) - score_one(score, features, row)) < 1e-12)
 
-    # ------------------------------------------------------------ sentinels
+    # --- sentinels
     print("\nA4 · sentinel semantics (-1 = no history)")
     i_rate = features.index("customer_prior_return_rate")
     probe = X[:500].copy()
@@ -201,7 +195,7 @@ def part_a(score, features, meta, test, X, y, p):
     for k, v in variants.items():
         print(f"         prior_return_rate = {k:<22} mean p = {v:.6f}")
 
-    # ------------------------------------------------------- coherent inputs
+    # --- coherent inputs
     print("\nA5 · coherent vs incoherent cold-start rows")
     i_new = features.index("is_new_customer")
     i_prior = features.index("customer_prior_orders")
@@ -221,7 +215,7 @@ def part_a(score, features, meta, test, X, y, p):
     note("incoherent row", f"scores {pb:.6f} - nothing validates feature coherence. "
                            f"If the API accepts caller-supplied features, it must.")
 
-    # ------------------------------------------------------ threshold edges
+    # --- threshold edges
     print("\nA6 · threshold boundary")
     check("p exactly == threshold is FLAGGED (>= semantics)", bool(thr >= thr))
     eps = 1e-12
@@ -229,7 +223,7 @@ def part_a(score, features, meta, test, X, y, p):
     n_at = int(np.sum(np.isclose(p, thr, atol=1e-9)))
     note("test rows sitting exactly on the threshold", f"{n_at}")
 
-    # ------------------------------------------------------- determinism etc
+    # --- determinism etc
     print("\nA7 · determinism and duplicates")
     check("repeat scoring is bit-identical", bool(np.array_equal(score(X), p)))
     dup = np.repeat(X[:1], 5, axis=0)
@@ -237,7 +231,7 @@ def part_a(score, features, meta, test, X, y, p):
     check("batch == row-by-row",
           bool(np.allclose([score(X[i])[0] for i in range(100)], p[:100], atol=1e-10)))
 
-    # ------------------------------------------------- out-of-range / drift
+    # --- out-of-range / drift
     print("\nA8 · values outside the training range")
     tr_max = X.max(axis=0)
     beyond = med.copy()
@@ -255,7 +249,7 @@ def part_a(score, features, meta, test, X, y, p):
                                  f"validate upstream")
 
 
-# =========================================================== PART B: ACCURACY
+# === PART B: accuracy
 def metrics_at(y, p, thr):
     yhat = (p >= thr).astype(int)
     tn, fp, fn, tp = confusion_matrix(y, yhat, labels=[0, 1]).ravel()
@@ -298,7 +292,7 @@ def part_b(score, features, meta, test, X, y, p, n_boot, thr_override=None):
         print(f"     cost on the TEST set also fits the test set, which is why p* -")
         print(f"     derived from the cost model alone - is the safer operating point.")
 
-    # ------------------------------------------------------------- headline
+    # --- headline
     m = metrics_at(y, p, thr)
     rule("B1 · headline metrics at the chosen threshold", "-")
     print(f"""
@@ -322,7 +316,7 @@ def part_b(score, features, meta, test, X, y, p, n_boot, thr_override=None):
               f"{1-base:.4f}.\n    That is expected at a recall-heavy operating point and is "
               f"why accuracy\n    is not the selection criterion here.")
 
-    # -------------------------------------------------------- bootstrap CIs
+    # --- bootstrap CIs
     rule(f"B2 · bootstrap confidence intervals ({n_boot:,} resamples)", "-")
     rng = np.random.default_rng(42)
     boot = {"roc_auc": [], "precision": [], "recall": [], "cost_inr": []}
@@ -345,7 +339,7 @@ def part_b(score, features, meta, test, X, y, p, n_boot, thr_override=None):
         print(f"    {k:<12} {np.mean(v):>12.4f}   95% CI [{lo:.4f}, {hi:.4f}]")
     print("\n    A CI that straddles a decision boundary means the difference is noise.")
 
-    # --------------------------------------------------------- vs baselines
+    # --- vs baselines
     rule("B3 · versus baselines (cost is the criterion)", "-")
     rng2 = np.random.default_rng(7)
     rand_at_rate = (rng2.random(len(y)) < m["flag_rate"]).astype(int)
@@ -383,7 +377,7 @@ def part_b(score, features, meta, test, X, y, p, n_boot, thr_override=None):
 
     # The comparison that actually matters: "flag everything" needs no model at
     # all. If the model's edge over it is inside the bootstrap noise, the model
-    # is not yet earning its place AT THIS COST RATIO.
+    # is not yet earning its place at this cost ratio.
     lo, hi = ci["cost_inr"]
     print(f"\n    Model cost 95% CI: INR [{lo:,.2f}, {hi:,.2f}]")
     print(f"    'Flag everything' costs INR {all_cost:,.2f}, which needs no model at all.")
@@ -397,7 +391,7 @@ def part_b(score, features, meta, test, X, y, p, n_boot, thr_override=None):
         print(f"\n    The model's edge over 'flag everything' is outside the CI, "
               f"so it is real at this cost ratio.")
 
-    # -------------------------------------------------------- calibration
+    # --- calibration
     rule("B4 · calibration (the cost model depends on this)", "-")
     d = pd.DataFrame({"p": p, "y": y})
     d["decile"] = pd.qcut(d.p, 10, labels=False, duplicates="drop")
@@ -412,9 +406,9 @@ def part_b(score, features, meta, test, X, y, p, n_boot, thr_override=None):
     ece = float((cal.n / cal.n.sum() * cal.gap.abs()).sum())
     print(f"\n    expected calibration error (ECE): {ece:.4f}")
     print("    Well-calibrated probabilities are what make the cost curve meaningful;")
-    print("    CLAUDE.md forbids resampling for exactly this reason.")
+    print("    Nothing in this repo resamples, for exactly that reason.")
 
-    # --------------------------------------------------------------- lift
+    # --- lift
     rule("B5 · lift by score decile", "-")
     d["rank_decile"] = pd.qcut(d.p.rank(method="first", ascending=False), 10,
                                labels=False, duplicates="drop")
@@ -430,7 +424,7 @@ def part_b(score, features, meta, test, X, y, p, n_boot, thr_override=None):
     print(f"\n    The riskiest 10% of orders contain {top.cum_returns_pct:.1%} of all returns "
           f"({top.lift:.2f}x the base rate).")
 
-    # ------------------------------------------------------------ segments
+    # --- segments
     rule("B6 · segment breakdown (where does it work?)", "-")
     seg = test.copy()
     seg["p"] = p
@@ -458,7 +452,7 @@ def part_b(score, features, meta, test, X, y, p, n_boot, thr_override=None):
                pd.qcut(seg.order_value, 4, labels=["Q1 smallest", "Q2", "Q3", "Q4 largest"]))
     seg_report("by geography", seg.is_uk.map({1: "UK", 0: "non-UK"}))
 
-    # -------------------------------------------------------------- drift
+    # --- drift
     rule("B7 · temporal stability across the test window", "-")
     seg["period"] = pd.qcut(seg.order_date.rank(method="first"), 3,
                             labels=["early", "middle", "late"])

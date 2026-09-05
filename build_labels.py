@@ -1,12 +1,11 @@
 """
-AI Risk Manager
-Step 1: acquire Online Retail II, construct the return label, and emit a
-labelled, chronologically-split order table.
-
-Every cutoff in here is derived from the data, not assumed. The values in
-CONFIG were measured by profiling this dataset; see the printout at the end.
+Step 1: fetch Online Retail II, build the return label, emit a labelled and
+chronologically-split order table.
 
     python build_labels.py
+
+Every cutoff here is derived from the data rather than assumed - the values in
+CONFIG came out of profiling this dataset, see the printout at the end.
 
 Outputs
     retail2.pkl          raw dataset
@@ -35,7 +34,7 @@ def _verify(path):
     Fail loudly if the file is not the one this repo was measured on.
 
     Without this, "the numbers moved" and "upstream force-pushed" look
-    identical, and every verified count in BUILD_PLAN_1.md quietly stops
+    identical, and every verified count in BUILD_PLAN.md quietly stops
     meaning anything.
     """
     h = hashlib.sha256()
@@ -50,7 +49,7 @@ CHECKSUM MISMATCH for {path}
   got      {got}
 The upstream file changed, or the download was corrupted. Delete it to
 re-fetch. Do NOT update the constant to match without re-verifying every
-number in BUILD_PLAN_1.md.""")
+number in BUILD_PLAN.md.""")
     return got
 
 
@@ -62,7 +61,7 @@ def load() -> pd.DataFrame:
     if not os.path.exists(path):
         import urllib.request
         print(f"downloading {SOURCE_URL}")
-        # Verify BEFORE the file becomes the one the pipeline reads, so a
+        # Verify before the file becomes the one the pipeline reads, so a
         # corrupted fetch cannot be mistaken for a cached good one next run.
         tmp = path + ".part"
         urllib.request.urlretrieve(SOURCE_URL, tmp)
@@ -116,7 +115,7 @@ def match_returns(df: pd.DataFrame) -> pd.DataFrame:
 
 def build_orders(df: pd.DataFrame, matches: pd.DataFrame) -> pd.DataFrame:
     """Aggregate to one row per order and attach the label."""
-    # The label horizon and the maturity horizon must be the SAME window.
+    # The label horizon and the maturity horizon must be the same window.
     # Counting returns at any horizon while guaranteeing only 90 days of
     # observation makes the positive rate a function of how long each order
     # happened to be watched - see config.py.
@@ -209,11 +208,11 @@ def main():
   customers with >1 order     {(mature.groupby('customer_id').size()>1).mean():.1%}
 {'='*66}
 """)
-    # Pickle is the file to TRAIN from: it round-trips dtypes exactly, so
+    # Pickle is the file to train from: it round-trips dtypes exactly, so
     # order_date stays a datetime and `returned` stays a bool.
     mature.to_pickle("orders_labeled.pkl")
 
-    # CSV is the file to LOOK at — open it in Excel, diff it, paste from it.
+    # CSV is the file to look at — open it in Excel, diff it, paste from it.
     # Reading it back needs explicit parsing, so do not train from this one:
     #     pd.read_csv("orders_labeled.csv", parse_dates=["order_date"])
     mature.to_csv("orders_labeled.csv", index=False)

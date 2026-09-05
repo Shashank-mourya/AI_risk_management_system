@@ -1,42 +1,32 @@
 """
-AI Risk Manager
-Synthetic stand-in for features.pkl, emitted in the REAL schema.
+Synthetic stand-in for features.pkl, emitted in the real schema.
 
     python make_synthetic_dataset.py
 
-WHY THIS FILE EXISTS
---------------------
-Phase 1 is present and verified, so `features.pkl` is the real training input and
-notebooks/train_model.ipynb uses it by default. This generator exists as a
-fallback for the cases where the real matrix is not on hand:
+features.pkl is the real training input and the notebook uses it by default.
+This generator is the fallback for when the real matrix is not on hand: a Kaggle
+kernel where uploading a 139 MB risk.db or rerunning the downloader is not worth
+it, CI and smoke tests that must not depend on a network download, and
+exercising test_model.py without a full pipeline run.
 
-  - a Kaggle kernel where uploading the 139 MB risk.db or rerunning the
-    downloader is not worth it
-  - CI / smoke tests that must not depend on a network download
-  - exercising test_model.py without a full Phase 1 run
+It emits the same 17 feature columns, the same id column (`Invoice`), the same
+single -1 sentinel and the same train/test split semantics as build_features.py,
+so the notebook needs no branching beyond one flag.
 
-It emits the SAME 17 feature columns, the same id column (`Invoice`), the same
-single -1 sentinel and the same train/test split semantics as
-`build_features.py`, so the notebook needs no branching beyond one flag.
-
-WHAT IT IS NOT
---------------
 It is not evaluation data. Any precision/recall/AUC computed on these rows
-measures THIS GENERATOR, not the model. CLAUDE.md's honesty bar forbids
-reporting such numbers. Artefacts trained on it are stamped REPORTABLE=false.
+measures the generator, not the model, and must not be reported; artefacts
+trained on it are stamped REPORTABLE=false.
 
-LEAKAGE DISCIPLINE (mirrors hard rule #1)
------------------------------------------
-Return outcomes are drawn from latent customer and SKU propensities plus the
-order's own attributes. They are NEVER drawn from the computed history features.
-The as-of features are then built in a second, strictly chronological pass in
-which a prior return counts only if its RETURN DATE precedes the current order
-date - never by an earlier order's eventual label. Both the customer-history and
-the basket-SKU features obey this.
+Leakage discipline mirrors the real pipeline. Return outcomes are drawn from
+latent customer and SKU propensities plus the order's own attributes, never from
+the computed history features. The as-of features are then built in a second,
+strictly chronological pass in which a prior return counts only if its return
+date precedes the current order date - never by an earlier order's eventual
+label. Both the customer-history and the basket-SKU features obey this.
 
-Gap constants come from the measured block in CLAUDE.md, so the synthetic gap
-distribution reproduces the real one (p50 10d / p90 84d / p95 ~150d, 90-day
-window capturing ~90.6% of returns).
+Gap constants come from the measured distribution of the real data, so the
+synthetic gaps reproduce it (p50 10d / p90 84d / p95 ~150d, the 90-day window
+capturing ~90.6% of returns).
 """
 
 import numpy as np
@@ -51,7 +41,7 @@ WINDOW_END = pd.Timestamp("2011-12-09")
 
 from config import MIN_GAP_DAYS, RETURN_WINDOW_DAYS, TRAIN_FRACTION  # noqa: E402
 
-# Solved from CLAUDE.md: median = exp(mu) = 10d, p90 = exp(mu + 1.2816*sigma) = 84d,
+# Solved from the measured gap distribution: median = exp(mu) = 10d, p90 = exp(mu + 1.2816*sigma) = 84d,
 # which also gives p95 ~= 153d and P(gap <= 90) ~= 0.907.
 GAP_MU = np.log(10.0)
 GAP_SIGMA = (np.log(84.0) - GAP_MU) / 1.2816
@@ -77,7 +67,7 @@ FEATURES = [
 assert len(FEATURES) == 17
 
 # Only this one carries -1. "No history" is a different state from "never
-# returned" and must not be imputed to 0 (CLAUDE.md).
+# returned" and must not be imputed to 0.
 SENTINEL_FEATURES = ["customer_prior_return_rate"]
 SENTINEL = -1.0
 
@@ -208,7 +198,7 @@ def build_asof_features(o):
 
     first_seen, c_dates, c_rets = {}, {}, {}
     sku_orders = np.zeros(N_SKUS)          # prior orders containing this SKU
-    sku_returns = np.zeros(N_SKUS)         # prior RETURNED orders containing it
+    sku_returns = np.zeros(N_SKUS)         # prior returned orders containing it
     pending = []                           # (return_date, basket) not yet counted
     pending_i = 0
 
@@ -276,7 +266,7 @@ def main():
     o = build_asof_features(o)
 
     # maturity, then an 80/20 chronological split - matching build_labels.py,
-    # which emits ONLY mature orders.
+    # which emits only mature orders.
     end = o.order_date.max()
     cutoff = end - pd.Timedelta(days=RETURN_WINDOW_DAYS)
     n_all = len(o)

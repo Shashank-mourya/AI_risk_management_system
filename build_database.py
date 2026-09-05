@@ -1,17 +1,15 @@
 """
-AI Risk Manager
-Step 3: create the SQLite database and load Online Retail II into it.
-
-Run AFTER build_labels.py.
+Step 3: create risk.db and load Online Retail II into it. Run after
+build_labels.py.
 
     python build_database.py
 
-Creates risk.db from AI_Risk_Manager_schema_v3.sql and loads the nine tables
-that carry data. Two tables stay deliberately empty (disputes, payment_context)
-— see the schema document, section 10.2. The rest are written at runtime by the
-model, evaluation and review layers.
+Builds the schema from AI_Risk_Manager_schema_v3.sql and loads the nine tables
+that carry data. disputes and payment_context stay empty on purpose (schema doc,
+section 10.2); the rest are written at runtime by the model, evaluation and
+review layers.
 
-The database file is regenerable and should not be committed.
+The database file is regenerable - don't commit it.
 """
 
 import os
@@ -75,7 +73,7 @@ def main():
     end = df.InvoiceDate.max()
     now = int(pd.Timestamp.now('UTC').timestamp())
 
-    # ------------------------------------------------------------- merchants
+    # --- merchants
     con.execute(
         "INSERT INTO merchants VALUES (?,?,?,?,?,?)",
         (MERCHANT_ID, "Online Retail II (UCI) demo merchant",
@@ -85,7 +83,7 @@ def main():
     purchases = df[(~df.isC) & (df.Quantity > 0) & df.CustomerID.notna()].copy()
     purchases["line_value"] = purchases.Quantity * purchases.Price
 
-    # ------------------------------------------------------------- customers
+    # --- customers
     cust = purchases.groupby("CustomerID").InvoiceDate.min().reset_index()
     cust["id"] = "cust_" + cust.CustomerID.astype(int).astype(str)
     con.executemany(
@@ -94,7 +92,7 @@ def main():
           int(r.InvoiceDate.timestamp()), int(r.InvoiceDate.timestamp()), now)
          for r in cust.itertuples()])
 
-    # ---------------------------------------------------------------- orders
+    # --- orders
     o = purchases.groupby("Invoice").agg(
         cust=("CustomerID", "first"), date=("InvoiceDate", "min"),
         country=("Country", "first"), value=("line_value", "sum")).reset_index()
@@ -108,7 +106,7 @@ def main():
           str(r.Invoice), "paid", 1, None, r.country, None, int(r.ts))
          for r in o.itertuples()])
 
-    # -------------------------------------------------------------- products
+    # --- products
     prod = purchases.groupby("StockCode").agg(
         name=("Description", "first"), price=("Price", "mean")).reset_index()
     prod["pid"] = "prod_" + prod.StockCode.astype(str)
@@ -117,7 +115,7 @@ def main():
         [(r.pid, MERCHANT_ID, str(r.StockCode), r.name, "uncategorised",
           None, int(round(r.price * 100)), "none", now) for r in prod.itertuples()])
 
-    # ----------------------------------------------------------- order_items
+    # --- order_items
     purchases["oitem"] = "oitem_" + purchases.index.astype(str)
     con.executemany(
         "INSERT INTO order_items VALUES (?,?,?,?,?,?,?,?,?)",
@@ -126,16 +124,16 @@ def main():
           int(r.Quantity), None, 0)
          for r in purchases.itertuples()])
 
-    # -------------------------------------------------------------- payments
+    # --- payments
     # The source has no payment layer: one captured payment per order.
-    # `method` is a constant and is EXCLUDED from the feature set.
+    # `method` is a constant and is excluded from the feature set.
     con.executemany(
         "INSERT INTO payments (id,merchant_id,order_id,customer_id,amount,currency,"
         "status,method,captured,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
         [("pay_" + str(r.Invoice), MERCHANT_ID, r.oid, r.cid, int(r.amt),
           CURRENCY, "captured", "card", 1, int(r.ts)) for r in o.itertuples()])
 
-    # --------------------------------------------------------------- refunds
+    # --- refunds
     returns = df[(df.isC) & (df.Quantity < 0) & df.CustomerID.notna()].copy()
     purchases["pidx"] = purchases.index
     returns["ridx"] = returns.index
@@ -157,7 +155,7 @@ def main():
           int(round(abs(r.Quantity) * r.Price * 100)), CURRENCY, "processed",
           "customer_return", int(r.rts)) for r in genuine.itertuples()])
 
-    # ----------------------------------------------------------- risk_labels
+    # --- risk_labels
     # label_disputed is always 0: there is no dispute data. label_matured_at
     # follows the merchant's return window; immature orders are excluded, not
     # counted as clean.
@@ -174,7 +172,7 @@ def main():
                      None if matured else "immature", 1, now))
     con.executemany("INSERT INTO risk_labels VALUES (?,?,?,?,?,?,?,?,?,?,?)", rows)
 
-    # ------------------------------------------------ datasets & split freeze
+    # --- datasets & split freeze
     import hashlib
     members = [(DATASET_ID, "pay_" + str(r.Invoice), r.split)
                for r in orders_lbl.itertuples()]
@@ -189,7 +187,7 @@ def main():
 
     con.commit()
 
-    # ----------------------------------------------------------------- verify
+    # --- verify
     print(f"\n{'='*58}\n  {DB}  —  {os.path.getsize(DB)/1e6:.1f} MB\n{'='*58}")
     tables = [r[0] for r in con.execute(
         "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")]

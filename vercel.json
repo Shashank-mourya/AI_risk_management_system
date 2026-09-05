@@ -1,0 +1,25 @@
+{
+  "builds": [
+    {
+      "src": "api/index.py",
+      "use": "@vercel/python",
+      "config": {
+        "includeFiles": [
+          "config.py",
+          "cost_model.py",
+          "predict.py",
+          "artefacts/model.joblib",
+          "artefacts/scaler.joblib",
+          "artefacts/threshold.json",
+          "artefacts/threshold_sweep.csv"
+        ]
+      }
+    },
+    { "src": "static/**", "use": "@vercel/static" }
+  ],
+  "routes": [
+    { "src": "/api/(.*)", "dest": "/api/index.py" },
+    { "src": "/static/(.*)", "dest": "/static/$1" },
+    { "src": "/(.*)", "dest": "/api/index.py" }
+  ]
+}
