@@ -76,33 +76,93 @@ not.
 
 ## Running it
 
+Each step depends on the one before it, so run them in order the first time. Every step
+below works with no API key; the one place a key matters is called out at the end.
+
+**1. Clone and enter the repo**
+
 ```bash
 git clone <this repo> && cd ai-risk-manager
+```
+
+**2. Create and activate a virtual environment**
+
+```bash
 python -m venv .venv
 source .venv/bin/activate          # Windows: .venv\Scripts\activate
+```
+
+**3. Install dependencies**
+
+```bash
 pip install -r requirements.txt
+```
 
-# data pipeline (downloads ~5.5 MB on first run, SHA-256 verified)
-python build_labels.py             # ~1 min
-python build_features.py           # ~30 s
-python build_database.py           # ~20 s
-python test_phase1.py              # 77 checks, all must pass
+**4. Build the data pipeline** — downloads the ~5.5 MB source dataset on first run and
+verifies it against the SHA-256 pinned in `config.py`. Each script writes files the next
+one reads, so run them in this order.
 
-# training (CPU; a GPU is slower at this size)
+```bash
+python build_labels.py             # match returns to purchases, apply the label + split  (~1 min)
+python build_features.py           # 17 as-of features, no future information              (~30 s)
+python build_database.py           # load risk.db from the 30-table schema                 (~20 s)
+```
+
+**5. Verify the pipeline before trusting anything built on it**
+
+```bash
+python test_phase1.py              # 77 checks: leakage, split, database, reproducibility — all must pass
+```
+
+**6. Train the model** — logistic regression and LightGBM, same features and split, picked
+on total cost. CPU only; a GPU is slower at this size, so the notebook doesn't ask for one.
+
+```bash
 jupyter nbconvert --to notebook --execute --inplace notebooks/train_model.ipynb
-python test_model.py               # 26 invariant checks
-python evaluate_model.py           # 27 edge cases + the held-out report
+```
 
-# join the model to the database, then explain
-python score_to_db.py
-python test_explain.py             # 35 checks, no API key needed
+**7. Verify the trained artefacts**
 
-# demo
+```bash
+python test_model.py               # 26 checks: artefact wiring, determinism, threshold contract
+python evaluate_model.py           # 27 edge cases, then the held-out accuracy report
+```
+
+**8. Join the model to the database, then generate an explanation**
+
+```bash
+python score_to_db.py              # writes risk_scores + risk_score_features for every test order
+python test_explain.py             # 35 checks on the explanation boundary — no API key needed
+```
+
+**9. Run the demo**
+
+```bash
 streamlit run app.py
 ```
 
-Live LLM explanations need a key: copy `.env.example` to `.env` and add a free one from
-[console.groq.com/keys](https://console.groq.com/keys). Everything else runs without it.
+Open the local URL Streamlit prints (typically `http://localhost:8501`). Score an order,
+move the cost-model sliders, and read the held-out evidence tab.
+
+**Optional — live LLM explanations.** Every step above runs without a key; the explanation
+panel in the demo just reports "no explanation available" without one. To turn it on, copy
+`.env.example` to `.env` and add a free key from
+[console.groq.com/keys](https://console.groq.com/keys):
+
+```bash
+cp .env.example .env               # then paste GROQ_API_KEY=... into it
+python explain.py --invariance     # optional: 3 different models, 1 identical decision
+```
+
+**Optional — the Flask + vanilla-JS surface in `api/` and `static/`.** A second,
+framework-free demo of the same decision (`predict.py`) and cost model (`cost_model.py`),
+built for a serverless deployment (`vercel.json`) rather than local use. It reads the
+`artefacts/` step 6 just wrote, so no separate training step is needed.
+
+```bash
+pip install -r api/requirements.txt
+python api/index.py                # serves http://localhost:5000
+```
 
 ## Layout
 
