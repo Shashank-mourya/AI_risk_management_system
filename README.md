@@ -86,7 +86,7 @@ pip install -r requirements.txt
 python build_labels.py             # ~1 min
 python build_features.py           # ~30 s
 python build_database.py           # ~20 s
-python test_phase1.py              # 72 checks, all must pass
+python test_phase1.py              # 77 checks, all must pass
 
 # training (CPU; a GPU is slower at this size)
 jupyter nbconvert --to notebook --execute --inplace notebooks/train_model.ipynb
@@ -230,12 +230,12 @@ trail to make room for a re-score.
 ## Tests
 
 ```
-test_phase1.py      72   pipeline, leakage, split, database, score↔label join
+test_phase1.py      77   pipeline, leakage, split, database, score↔label join, gitignore hygiene
 test_model.py       26   artefact wiring, determinism, sentinels, threshold contract
 evaluate_model.py   27   edge cases: shapes, extremes, NaN/inf, feature order
 test_explain.py     35   explanation boundary, adversarial model, cache, retry, failure
                    ---
-                   160
+                   165
 ```
 
 `evaluate_model.py` part B is measurement rather than pass/fail — bootstrap CIs,

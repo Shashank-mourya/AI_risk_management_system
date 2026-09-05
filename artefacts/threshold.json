@@ -1,96 +1,96 @@
 {
- "chosen_threshold": 0.17,
- "winner": "logistic regression",
- "selection_rule": "minimum total cost on held-out test set",
- "rationale": "LightGBM's cost advantage is 0.2%, at or below the 2% bar, so the simpler and directly interpretable model ships.",
- "marginal_gain_threshold": 0.02,
- "relative_gain_over_logreg": 0.002161,
- "requires_scaler": true,
- "features": [
-  "order_value",
-  "log_order_value",
-  "n_lines",
-  "total_quantity",
-  "mean_unit_price",
-  "max_unit_price",
-  "price_vs_sku_mean",
-  "hour_of_day",
-  "day_of_week",
-  "is_uk",
-  "customer_prior_orders",
-  "customer_prior_returns",
-  "customer_prior_return_rate",
-  "customer_tenure_days",
-  "is_new_customer",
-  "basket_sku_return_rate",
-  "basket_max_sku_return_rate"
- ],
- "sentinel_features": [
-  "customer_prior_return_rate"
- ],
- "sentinel_value": -1,
- "cost_model": {
-  "measured": {
-   "returned_order_value_pence": 38815,
-   "kept_order_value_pence": 28559
+  "chosen_threshold": 0.17,
+  "winner": "logistic regression",
+  "selection_rule": "minimum total cost on held-out test set",
+  "rationale": "LightGBM's cost advantage is 0.2%, at or below the 2% bar, so the simpler and directly interpretable model ships.",
+  "marginal_gain_threshold": 0.02,
+  "relative_gain_over_logreg": 0.002161,
+  "requires_scaler": true,
+  "features": [
+    "order_value",
+    "log_order_value",
+    "n_lines",
+    "total_quantity",
+    "mean_unit_price",
+    "max_unit_price",
+    "price_vs_sku_mean",
+    "hour_of_day",
+    "day_of_week",
+    "is_uk",
+    "customer_prior_orders",
+    "customer_prior_returns",
+    "customer_prior_return_rate",
+    "customer_tenure_days",
+    "is_new_customer",
+    "basket_sku_return_rate",
+    "basket_max_sku_return_rate"
+  ],
+  "sentinel_features": [
+    "customer_prior_return_rate"
+  ],
+  "sentinel_value": -1,
+  "cost_model": {
+    "measured": {
+      "returned_order_value_pence": 38815,
+      "kept_order_value_pence": 28559
+    },
+    "assumed": {
+      "goods_recovery_rate": 0.65,
+      "psp_fee_rate": 0.02,
+      "return_logistics_pence": 850,
+      "cost_review_pence": 500,
+      "abandon_rate": 0.08,
+      "contribution_margin_rate": 0.22,
+      "prevention_rate": 0.3
+    },
+    "derived": {
+      "cost_return_pence": 15212,
+      "cost_friction_pence": 503,
+      "analytic_break_even": 0.197963
+    },
+    "display_currency": {
+      "stored_unit": "pence (GBP)",
+      "displayed_unit": "INR",
+      "gbp_to_inr": 75.0,
+      "basis": "contemporaneous 2009-2011 mid-market rate, assumed not measured",
+      "note": "a display relabelling only; the threshold is scale-invariant so this changes no decision"
+    },
+    "formula": "(tp+fp)*review + fp*friction + fn*cost_return + tp*cost_return*(1-prevention)"
   },
-  "assumed": {
-   "goods_recovery_rate": 0.65,
-   "psp_fee_rate": 0.02,
-   "return_logistics_pence": 850,
-   "cost_review_pence": 500,
-   "abandon_rate": 0.08,
-   "contribution_margin_rate": 0.22,
-   "prevention_rate": 0.3
+  "analytic_break_even": 0.197963,
+  "holdout": {
+    "n_train": 24277,
+    "n_test": 6070,
+    "base_rate_train": 0.168307,
+    "base_rate_test": 0.163262,
+    "split_date": "2011-04-28",
+    "precision": 0.330435,
+    "recall": 0.613522,
+    "f1": 0.42953,
+    "roc_auc": 0.748436,
+    "pr_auc": 0.375123,
+    "accuracy": 0.733937,
+    "flag_rate": 0.30313,
+    "brier": 0.121446,
+    "confusion": {
+      "tp": 608,
+      "fp": 1232,
+      "fn": 383,
+      "tn": 3847
+    }
   },
-  "derived": {
-   "cost_return_pence": 15212,
-   "cost_friction_pence": 503,
-   "analytic_break_even": 0.197963
+  "cost_inr": {
+    "at_chosen_threshold": 10380089.4,
+    "flag_nothing_baseline": 11306319.0,
+    "flag_everything_baseline": 12106726.05,
+    "saved_vs_flag_nothing": 926229.6,
+    "saved_vs_flag_nothing_pct": 0.081921,
+    "per_order_crosscheck": 15997666.69,
+    "per_order_flag_nothing": 17862692.38
   },
-  "formula": "(tp+fp)*review + fp*friction + fn*cost_return + tp*cost_return*(1-prevention)"
- },
- "analytic_break_even": 0.197963,
- "holdout": {
-  "n_train": 24277,
-  "n_test": 6070,
-  "base_rate_train": 0.168307,
-  "base_rate_test": 0.163262,
-  "split_date": "2011-04-28",
-  "precision": 0.330435,
-  "recall": 0.613522,
-  "f1": 0.42953,
-  "roc_auc": 0.748436,
-  "pr_auc": 0.375123,
-  "accuracy": 0.733937,
-  "flag_rate": 0.30313,
-  "brier": 0.121446,
-  "confusion": {
-   "tp": 608,
-   "fp": 1232,
-   "fn": 383,
-   "tn": 3847
-  }
- },
- "cost_inr": {
-  "at_chosen_threshold": 10380089.25,
-  "flag_nothing_baseline": 11306319.0,
-  "flag_everything_baseline": 12106725.75,
-  "saved_vs_flag_nothing": 926229.75,
-  "saved_vs_flag_nothing_pct": 0.081921,
-  "per_order_crosscheck": 15997666.5,
-  "per_order_flag_nothing": 17862692.25
- },
- "currency": {
-  "stored": "GBP (pence)",
-  "displayed": "INR",
-  "gbp_to_inr": 75.0,
-  "basis": "contemporaneous 2009-2011 rate, assumed not measured",
-  "note": "display relabelling; the threshold is scale-invariant under it"
- },
- "training_device": "cpu",
- "DATA_IS_SYNTHETIC": false,
- "REPORTABLE": true,
- "degenerate_optimum": false,
- "warning": null
+  "training_device": "cpu",
+  "DATA_IS_SYNTHETIC": false,
+  "REPORTABLE": true,
+  "degenerate_optimum": false,
+  "warning": null
 }
